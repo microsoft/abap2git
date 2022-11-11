@@ -40,6 +40,7 @@ CLASS zcl_im__badi_abaptogit_sync IMPLEMENTATION.
 
     DATA lt_object_package_name_list TYPE ty_devclass.
     DATA lv_package_names TYPE string.
+    DATA lv_devclass TYPE devclass.
 
     " K - workbench request only trying sync when workbench request is released
     DATA(lt_eligible_tr_types) = VALUE ty_list_string( ( `K` ) ).
@@ -52,7 +53,7 @@ CLASS zcl_im__badi_abaptogit_sync IMPLEMENTATION.
 
         LOOP AT objects INTO DATA(ls_object).
 
-          SELECT SINGLE devclass INTO @DATA(lv_devclass) FROM tadir
+          SELECT SINGLE devclass INTO @lv_devclass FROM tadir
             WHERE object = @ls_object-object AND obj_name = @ls_object-obj_name.
           " Update object_package_name_list for ABAPGit sync, it is possible to have one transport request's objects are from multiple packages
           IF NOT line_exists( lt_object_package_name_list[ table_line = lv_devclass ] ).
@@ -66,7 +67,7 @@ CLASS zcl_im__badi_abaptogit_sync IMPLEMENTATION.
         CONCATENATE LINES OF lt_package_list INTO lv_package_names SEPARATED BY ','.
         me->perform_spotsync_abaptogit( iv_package_names = lv_package_names  iv_trid = request ).
 
-      CATCH cx_t100_msg.
+      CATCH cx_root INTO DATA(lx_root).
 
     ENDTRY.
   ENDMETHOD.
