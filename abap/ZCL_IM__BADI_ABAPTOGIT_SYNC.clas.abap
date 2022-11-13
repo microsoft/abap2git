@@ -100,14 +100,16 @@ CLASS zcl_im__badi_abaptogit_sync IMPLEMENTATION.
     " TODO: specify personal access token of the user name above for ADO REST API
     DATA lv_pat TYPE string.
 
-    DATA lo_abaptogit TYPE REF TO zcl_hrpy_utility_abaptogit.
-    CREATE OBJECT lo_abaptogit
-      EXPORTING
-        iv_username = lv_username
-        iv_pat      = lv_pat
-        iv_orgid    = lv_orgid
-        iv_repoid   = lv_repoid
-        iv_project  = lv_project.
+    DATA lo_abaptogit TYPE REF TO zcl_utility_abaptogit.
+    CREATE OBJECT lo_abaptogit.
+    lo_abaptogit->setup_ado(
+        EXPORTING
+            iv_username = lv_username
+            iv_pat      = lv_pat
+            iv_orgid    = lv_orgid
+            iv_repoid   = lv_repoid
+            iv_project  = lv_project
+             ).
     DATA lv_trid TYPE string.
     lv_trid = iv_trid.
     lo_abaptogit->spotsync_tr(
