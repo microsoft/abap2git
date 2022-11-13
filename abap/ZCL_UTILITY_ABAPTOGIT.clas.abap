@@ -320,6 +320,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lv_dat TYPE d.
     DATA lv_tim TYPE t.
 
+    IF iv_uptotrid IS SUPPLIED AND iv_mode <> ZCL_UTILITY_ABAPTOGIT_TR=>c_latest_version.
+        me->write_telemetry( iv_message = |latest version required for up-to TR ID supplied| ).
+        rv_success = abap_false.
+        EXIT.
+    ENDIF.
+
     IF iv_folder NP '*\'.
         lv_basefolder = iv_folder && '\'.
     ELSE.
@@ -488,6 +494,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lv_basefolder TYPE string.
     DATA lv_package TYPE devclass.
 
+    IF iv_uptotrid IS SUPPLIED AND iv_mode <> ZCL_UTILITY_ABAPTOGIT_TR=>c_latest_version.
+        me->write_telemetry( iv_message = |latest version required for up-to TR ID supplied| ).
+        rv_success = abap_false.
+        EXIT.
+    ENDIF.
+
     IF iv_folder NP '*\'.
         lv_basefolder = iv_folder && '\'.
     ELSE.
@@ -546,6 +558,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
     DATA lv_basefolder TYPE string.
     DATA lv_package TYPE devclass.
+
+    IF iv_uptotrid IS SUPPLIED AND iv_mode <> ZCL_UTILITY_ABAPTOGIT_TR=>c_latest_version.
+        me->write_telemetry( iv_message = |latest version required for up-to TR ID supplied| ).
+        rv_success = abap_false.
+        EXIT.
+    ENDIF.
 
     IF iv_folder NP '*\'.
         lv_basefolder = iv_folder && '\'.

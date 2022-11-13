@@ -8,11 +8,11 @@ REPORT z_abaptogit_localsync.
 
 PARAMETERS:
     " package name(s) split by comma
-    p_pname     TYPE devclass LOWER CASE,
+    p_pname     TYPE devclass LOWER CASE OBLIGATORY,
     " local folder to save downloaded ABAP object code files
-    p_folder    TYPE string,
+    p_folder    TYPE string OBLIGATORY,
     " Sync mode: active/latest
-    p_mode      TYPE string DEFAULT 'active' LOWER CASE,
+    p_mode      TYPE string DEFAULT 'active' LOWER CASE OBLIGATORY,
     " TR ID to sync up to, if blank sync to default latest version 
     p_uttrid    TYPE string LOWER CASE.
 
