@@ -126,12 +126,12 @@ PRIVATE SECTION.
            END OF ts_code_object.
 
     " helper objects for ADO and TR operations
-    DATA orefado TYPE REF TO ZCL_UTILITY_ABAPTOGIT_ADO.
-    DATA oreftr TYPE REF TO ZCL_UTILITY_ABAPTOGIT_TR.
+    DATA oref_ado TYPE REF TO ZCL_UTILITY_ABAPTOGIT_ADO.
+    DATA oref_tr TYPE REF TO ZCL_UTILITY_ABAPTOGIT_TR.
 
     " telemetry callback
-    DATA oreftelemetry TYPE REF TO object.
-    DATA methtelemetry TYPE string.
+    DATA oref_telemetry TYPE REF TO object.
+    DATA method_name_telemetry TYPE string.
 
     " wrapper to write telemetry with the callback registered
     METHODS write_telemetry
@@ -145,31 +145,31 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
   METHOD CONSTRUCTOR.
 
-    CREATE OBJECT me->oreftr
+    CREATE OBJECT me->oref_tr
         EXPORTING
             io_objtelemetry = io_objtelemetry
             iv_methtelemetry = iv_methtelemetry.
 
     IF io_objtelemetry IS SUPPLIED.
-        me->oreftelemetry = io_objtelemetry.
+        me->oref_telemetry = io_objtelemetry.
     ENDIF.
 
     IF iv_methtelemetry IS SUPPLIED.
-        me->methtelemetry = iv_methtelemetry.
+        me->method_name_telemetry = iv_methtelemetry.
     ENDIF.
 
   ENDMETHOD.
 
   METHOD SETUP_ADO.
-    CREATE OBJECT me->orefado
+    CREATE OBJECT me->oref_ado
         EXPORTING
             iv_username = iv_username
             iv_pat = iv_pat
             iv_orgid = iv_orgid
             iv_repoid = iv_repoid
             iv_project = iv_project
-            io_objtelemetry = me->oreftelemetry
-            iv_methtelemetry = me->methtelemetry.
+            io_objtelemetry = me->oref_telemetry
+            iv_methtelemetry = me->method_name_telemetry.
   ENDMETHOD.
 
   METHOD SPOTSYNC_TR.
@@ -182,7 +182,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
     me->write_telemetry( iv_message = |start spot sync: { sy-uzeit }| iv_kind = 'info' ).
 
-    rv_success = me->oreftr->get_tr_commit_objects(
+    rv_success = me->oref_tr->get_tr_commit_objects(
         EXPORTING
             iv_trid = iv_trid
             iv_packagenames = iv_packagenames
@@ -196,7 +196,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     me->write_telemetry( iv_message = |get TR { iv_trid } objects: { sy-uzeit }| iv_kind = 'info' ).
 
     me->prepare_landscape_branch( EXPORTING iv_prefix = iv_prefix IMPORTING ev_branch = lv_basebranch ).
-    rv_success = me->orefado->push_tr_commit_objects(
+    rv_success = me->oref_ado->push_tr_commit_objects(
         EXPORTING
             iv_trid = iv_trid
             iv_branch = lv_basebranch
@@ -209,7 +209,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
     me->write_telemetry( iv_message = |push TR { iv_trid } objects to system branch { lv_basebranch } with commit { lv_commitid }: { sy-uzeit }| iv_kind = 'info' ).
 
-    rv_success = me->orefado->kickoff_pipeline_run_ado(
+    rv_success = me->oref_ado->kickoff_pipeline_run_ado(
         EXPORTING
             iv_pipelineid = iv_pipelineid
             iv_branch = lv_basebranch
@@ -237,7 +237,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA(lv_itempath) = |{ lv_rootfolder }{ ZCL_UTILITY_ABAPTOGIT_ADO=>c_sync_status_file }|.
 
     " fetch content of shared sync status file
-    rv_success = me->orefado->get_item_ado(
+    rv_success = me->oref_ado->get_item_ado(
         EXPORTING
             iv_branch = iv_branch
             iv_itempath = lv_itempath
@@ -263,12 +263,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     ENDIF.
 
     " fetch TR IDs to sync since last one
-    me->orefado->get_trs( EXPORTING iv_fromtrid = lv_sync_status-trid IMPORTING et_trids = lt_trids ).
+    me->oref_ado->get_trs( EXPORTING iv_fromtrid = lv_sync_status-trid IMPORTING et_trids = lt_trids ).
 
     " push each TR ID to Git repo
     LOOP AT lt_trids INTO DATA(watrid).
         CLEAR lt_commit_objects.
-        rv_success = me->oreftr->get_tr_commit_objects(
+        rv_success = me->oref_tr->get_tr_commit_objects(
             EXPORTING
                 iv_trid = watrid
                 iv_packagenames = iv_packagenames
@@ -278,7 +278,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 it_commit_objects = lt_commit_objects
                  ).
         CHECK rv_success = abap_true.
-        rv_success = me->orefado->push_tr_commit_objects(
+        rv_success = me->oref_ado->push_tr_commit_objects(
             EXPORTING
                 iv_trid = watrid
                 iv_branch = iv_branch
@@ -379,7 +379,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         " fetch object version
         CLEAR lt_objversions.
         lv_objname3 = lv_objname.
-        lv_success = me->oreftr->get_versions_no(
+        lv_success = me->oref_tr->get_versions_no(
             EXPORTING
                 iv_objname = lv_objname3
                 iv_objtype = lv_objtype
@@ -396,7 +396,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         " construct object content (and test class content if any) as source code lines
         CLEAR lt_filecontent.
         CLEAR lt_tclsfilecontent.
-        lv_success = me->oreftr->build_code_content(
+        lv_success = me->oref_tr->build_code_content(
             EXPORTING
                 iv_objname = lv_objname3
                 iv_objtype = lv_objtype
@@ -533,9 +533,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD WRITE_TELEMETRY.
-    IF me->oreftelemetry IS NOT INITIAL AND me->methtelemetry IS NOT INITIAL.
-        DATA(oref) = me->oreftelemetry.
-        DATA(meth) = me->methtelemetry.
+    IF me->oref_telemetry IS NOT INITIAL AND me->method_name_telemetry IS NOT INITIAL.
+        DATA(oref) = me->oref_telemetry.
+        DATA(meth) = me->method_name_telemetry.
         CALL METHOD oref->(meth)
             EXPORTING
                 iv_message = iv_message

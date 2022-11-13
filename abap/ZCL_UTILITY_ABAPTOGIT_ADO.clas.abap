@@ -1,4 +1,5 @@
 " Helper class to talk to ADO REST API for Git and build pipeline operations
+" minor change
 CLASS ZCL_UTILITY_ABAPTOGIT_ADO DEFINITION
   PUBLIC
   FINAL
@@ -186,8 +187,8 @@ PRIVATE SECTION.
     DATA project TYPE string.
 
     " telemetry callback
-    DATA oreftelemetry TYPE REF TO object.
-    DATA methtelemetry TYPE string.
+    DATA oref_telemetry TYPE REF TO object.
+    DATA method_name_telemetry TYPE string.
 
     " construct sync status file content as a mark of which TR current branch sync to
     CLASS-METHODS build_sync_status
@@ -295,11 +296,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     me->project = iv_project.
 
     IF io_objtelemetry IS SUPPLIED.
-        me->oreftelemetry = io_objtelemetry.
+        me->oref_telemetry = io_objtelemetry.
     ENDIF.
 
     IF iv_methtelemetry IS SUPPLIED.
-        me->methtelemetry = iv_methtelemetry.
+        me->method_name_telemetry = iv_methtelemetry.
     ENDIF.
 
   ENDMETHOD.
@@ -760,9 +761,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD WRITE_TELEMETRY.
-    IF me->oreftelemetry IS NOT INITIAL AND me->methtelemetry IS NOT INITIAL.
-        DATA(oref) = me->oreftelemetry.
-        DATA(meth) = me->methtelemetry.
+    IF me->oref_telemetry IS NOT INITIAL AND me->method_name_telemetry IS NOT INITIAL.
+        DATA(oref) = me->oref_telemetry.
+        DATA(meth) = me->method_name_telemetry.
         CALL METHOD oref->(meth)
             EXPORTING
                 iv_message = iv_message

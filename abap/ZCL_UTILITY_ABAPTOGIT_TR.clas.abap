@@ -103,8 +103,8 @@ PROTECTED SECTION.
 PRIVATE SECTION.
 
     " telemetry callback
-    DATA oreftelemetry TYPE REF TO object.
-    DATA methtelemetry TYPE string.
+    DATA oref_telemetry TYPE REF TO object.
+    DATA method_name_telemetry TYPE string.
 
     " get function group name of an object in a function group
     METHODS get_fugr
@@ -181,11 +181,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
   METHOD CONSTRUCTOR.
 
     IF io_objtelemetry IS SUPPLIED.
-        me->oreftelemetry = io_objtelemetry.
+        me->oref_telemetry = io_objtelemetry.
     ENDIF.
 
     IF iv_methtelemetry IS SUPPLIED.
-        me->methtelemetry = iv_methtelemetry.
+        me->method_name_telemetry = iv_methtelemetry.
     ENDIF.
 
   ENDMETHOD.
@@ -211,6 +211,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lv_funcname TYPE string.
     DATA lt_tasks TYPE TABLE OF string.
     DATA lt_commentlines TYPE TABLE OF string.
+    DATA lt_taskids TYPE TABLE OF string.
+    DATA lv_task TYPE string.
+    DATA lv_taskid TYPE string.
+    DATA lv_taskdesc TYPE string.
+    DATA lt_taskfields TYPE TABLE OF string.
+    DATA lt_tasktexts TYPE TABLE OF string.
 
     rv_success = abap_true.
 
@@ -250,9 +256,19 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     " fetch tasks in a TR
     SELECT obj_name FROM e071 INTO TABLE @lt_tasks WHERE trkorr = @lv_trkorr AND object = 'RELE' AND pgmid = 'CORR'.
 
-    APPEND LINES OF lt_tasks TO lt_commentlines.
+    LOOP AT lt_tasks INTO lv_task.
+        CLEAR lt_taskfields.
+        SPLIT lv_task AT ' ' INTO TABLE lt_taskfields.
+        lv_taskid = lt_taskfields[ 1 ].
+        SELECT SINGLE as4text FROM e07t INTO @lv_taskdesc WHERE trkorr = @lv_taskid.
+        APPEND |{ lv_task } { lv_taskdesc }| TO lt_tasktexts.
+    ENDLOOP.
+
+    APPEND LINES OF lt_tasktexts TO lt_commentlines.
 
     ev_comment = concat_lines_of( table = lt_commentlines sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
+
+    CLEAR: lt_taskids, lt_taskfields, lt_tasktexts.
 
     SPLIT iv_packagenames AT ',' INTO TABLE lt_packagenames.
 
@@ -975,9 +991,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD WRITE_TELEMETRY.
-    IF me->oreftelemetry IS NOT INITIAL AND me->methtelemetry IS NOT INITIAL.
-        DATA(oref) = me->oreftelemetry.
-        DATA(meth) = me->methtelemetry.
+    IF me->oref_telemetry IS NOT INITIAL AND me->method_name_telemetry IS NOT INITIAL.
+        DATA(oref) = me->oref_telemetry.
+        DATA(meth) = me->method_name_telemetry.
         CALL METHOD oref->(meth)
             EXPORTING
                 iv_message = iv_message
