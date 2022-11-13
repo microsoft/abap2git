@@ -39,31 +39,37 @@ PUBLIC SECTION.
     " iv_package - package name
     " iv_folder - local folder name to save the files
     " iv_mode - 'latest' or 'active'
+    " iv_uptotrid - optional TR ID to fetch the version of each object no later than
     METHODS get_package_codes
         IMPORTING
             iv_package  TYPE devclass
             iv_folder   TYPE string
             iv_mode     TYPE string
+            iv_uptotrid TYPE string OPTIONAL
         RETURNING VALUE(rv_success) TYPE string.
 
     " fetch source code lines into files for ABAP code objects in given package list
     " iv_packages - package name list as string separated by comma
     " iv_folder - local folder name to save the files
     " iv_mode - 'latest' or 'active'
+    " iv_uptotrid - optional TR ID to fetch the version of each object no later than
     METHODS get_packages_codes
         IMPORTING
             iv_packages TYPE string
             iv_folder   TYPE string
             iv_mode     TYPE string
+            iv_uptotrid TYPE string OPTIONAL
         RETURNING VALUE(rv_success) TYPE string.
 
     " fetch source code lines into files for ABAP code objects in Y*/Z* packages
     " iv_folder - local folder name to save the files
     " iv_mode - 'latest' or 'active'
+    " iv_uptotrid - optional TR ID to fetch the version of each object no later than
     METHODS get_customize_packages_codes
         IMPORTING
             iv_folder   TYPE string
             iv_mode     TYPE string DEFAULT 'latest'
+            iv_uptotrid TYPE string OPTIONAL
         RETURNING VALUE(rv_success) TYPE string.
 
     " setup configs for ADO operations
@@ -209,17 +215,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
     me->write_telemetry( iv_message = |push TR { iv_trid } objects to system branch { lv_basebranch } with commit { lv_commitid }: { sy-uzeit }| iv_kind = 'info' ).
 
-    rv_success = me->oref_ado->kickoff_pipeline_run_ado(
-        EXPORTING
-            iv_pipelineid = iv_pipelineid
-            iv_branch = lv_basebranch
-            iv_commitid = lv_commitid
-        IMPORTING
-            ev_runid = lv_runid
-             ).
-
-    me->write_telemetry( iv_message = |kick off CI build { lv_runid } for pipeline { iv_pipelineid }: { sy-uzeit }| iv_kind = 'info' ).
-
   ENDMETHOD.
 
   METHOD CATCHUP_TRS.
@@ -322,6 +317,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lv_success TYPE string.
     DATA lv_objname3 TYPE e071-obj_name.
     DATA lv_version_no TYPE i.
+    DATA lv_dat TYPE d.
+    DATA lv_tim TYPE t.
 
     IF iv_folder NP '*\'.
         lv_basefolder = iv_folder && '\'.
@@ -360,6 +357,16 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     ENDLOOP.
     APPEND LINES OF lt_fmcodes TO lt_codes.
 
+    IF iv_uptotrid IS SUPPLIED.
+        SELECT SINGLE as4date INTO lv_dat FROM e070 WHERE trkorr = iv_uptotrid AND trfunction = 'K' AND trstatus = 'R'.
+        IF sy-subrc <> 0.
+            me->write_telemetry( iv_message = |{ iv_uptotrid } is not a released transport request| ).
+            rv_success = abap_false.
+            EXIT.
+        ENDIF.
+        SELECT SINGLE as4time INTO lv_tim FROM e070 WHERE trkorr = iv_uptotrid.
+    ENDIF.
+
     rv_success = abap_true.
 
     " download each object source code lines
@@ -379,16 +386,34 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         " fetch object version
         CLEAR lt_objversions.
         lv_objname3 = lv_objname.
-        lv_success = me->oref_tr->get_versions_no(
-            EXPORTING
-                iv_objname = lv_objname3
-                iv_objtype = lv_objtype
-                iv_mode = iv_mode
-            IMPORTING
-                ev_version_no = lv_version_no
-            CHANGING
-                cht_objversions = lt_objversions
-                ).
+
+        IF iv_uptotrid IS SUPPLIED.
+            " use date/time of up-to TR ID to constrain version to select if latest version
+            lv_success = me->oref_tr->get_versions_no(
+                EXPORTING
+                    iv_objname = lv_objname3
+                    iv_objtype = lv_objtype
+                    iv_mode = iv_mode
+                    iv_date = lv_dat
+                    iv_time = lv_tim
+                IMPORTING
+                    ev_version_no = lv_version_no
+                CHANGING
+                    cht_objversions = lt_objversions
+                    ).
+        ELSE.
+            " no up-to TR ID constraint
+            lv_success = me->oref_tr->get_versions_no(
+                EXPORTING
+                    iv_objname = lv_objname3
+                    iv_objtype = lv_objtype
+                    iv_mode = iv_mode
+                IMPORTING
+                    ev_version_no = lv_version_no
+                CHANGING
+                    cht_objversions = lt_objversions
+                    ).
+        ENDIF.
         " the object may not be ABAP code thus not versions fetched
         CHECK lv_success = abap_true.
         CHECK lines( lt_objversions ) > 0.
@@ -476,12 +501,22 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     " save objects in each package specified under the folder named as package name like \src\<package name>\
     LOOP AT lt_packages INTO DATA(wa).
         lv_package = wa.
-        lv_success = me->GET_PACKAGE_CODES(
-            EXPORTING
-                iv_package = lv_package
-                iv_folder = lv_basefolder
-                iv_mode = iv_mode
-                 ).
+        IF iv_uptotrid IS SUPPLIED.
+            lv_success = me->GET_PACKAGE_CODES(
+                EXPORTING
+                    iv_package = lv_package
+                    iv_folder = lv_basefolder
+                    iv_mode = iv_mode
+                    iv_uptotrid = iv_uptotrid
+                     ).
+        ELSE.
+            lv_success = me->GET_PACKAGE_CODES(
+                EXPORTING
+                    iv_package = lv_package
+                    iv_folder = lv_basefolder
+                    iv_mode = iv_mode
+                     ).
+        ENDIF.
         IF lv_success <> abap_true.
             me->write_telemetry( iv_message = |GET_PACKAGES_CODES has failure in package { lv_package }| ).
             rv_success = abap_false.
@@ -490,7 +525,20 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
     " mark down status of last sync TR ID and update date time
     DATA(lv_file) = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_ADO=>c_sync_status_file }|.
-    rv_success = ZCL_UTILITY_ABAPTOGIT_ADO=>save_sync_status( EXPORTING iv_mode = iv_mode iv_file = lv_file ).
+    IF iv_uptotrid IS SUPPLIED.
+        rv_success = ZCL_UTILITY_ABAPTOGIT_ADO=>save_sync_status(
+            EXPORTING
+                iv_mode = iv_mode
+                iv_file = lv_file
+                iv_trid = iv_uptotrid
+                 ).
+    ELSE.
+        rv_success = ZCL_UTILITY_ABAPTOGIT_ADO=>save_sync_status(
+            EXPORTING
+                iv_mode = iv_mode
+                iv_file = lv_file
+                 ).
+    ENDIF.
 
   ENDMETHOD.
 
@@ -514,12 +562,22 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     " save objects in each package collected under the folder named as package name like \src\<package name>\
     LOOP AT lt_packages INTO DATA(wa).
         lv_package = wa.
-        lv_success = me->GET_PACKAGE_CODES(
-            EXPORTING
-                iv_package = lv_package
-                iv_folder = lv_basefolder
-                iv_mode = iv_mode
-                 ).
+        IF iv_uptotrid IS SUPPLIED.
+            lv_success = me->GET_PACKAGE_CODES(
+                EXPORTING
+                    iv_package = lv_package
+                    iv_folder = lv_basefolder
+                    iv_mode = iv_mode
+                    iv_uptotrid = iv_uptotrid
+                     ).
+        ELSE.
+            lv_success = me->GET_PACKAGE_CODES(
+                EXPORTING
+                    iv_package = lv_package
+                    iv_folder = lv_basefolder
+                    iv_mode = iv_mode
+                     ).
+        ENDIF.
         IF lv_success <> abap_true.
             me->write_telemetry( iv_message = |GET_CUSTOMIZE_PACKAGES_CODES has failure in package { lv_package }| ).
             rv_success = abap_false.
@@ -528,7 +586,20 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
     " mark down status of last sync TR ID and update date time
     DATA(lv_file) = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_ADO=>c_sync_status_file }|.
-    rv_success = ZCL_UTILITY_ABAPTOGIT_ADO=>save_sync_status( EXPORTING iv_mode = iv_mode iv_file = lv_file ).
+    IF iv_uptotrid IS SUPPLIED.
+        rv_success = ZCL_UTILITY_ABAPTOGIT_ADO=>save_sync_status(
+            EXPORTING
+                iv_mode = iv_mode
+                iv_file = lv_file
+                iv_trid = iv_uptotrid
+                 ).
+    ELSE.
+        rv_success = ZCL_UTILITY_ABAPTOGIT_ADO=>save_sync_status(
+            EXPORTING
+                iv_mode = iv_mode
+                iv_file = lv_file
+                 ).
+    ENDIF.
 
   ENDMETHOD.
 

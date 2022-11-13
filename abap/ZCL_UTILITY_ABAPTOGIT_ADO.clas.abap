@@ -38,24 +38,6 @@ PUBLIC SECTION.
             commits     TYPE tty_commits,
             refUpdates  TYPE tty_refupdates,
            END OF ts_push_json_req.
-    TYPES: BEGIN OF ts_updaterefs_json_req,
-            name        TYPE string,
-            oldObjectId TYPE string,
-            newObjectId TYPE string,
-           END OF ts_updaterefs_json_req.
-    TYPES: BEGIN OF ts_self,
-            refName TYPE string,
-            version TYPE string,
-           END OF ts_self.
-    TYPES: BEGIN OF ts_repository,
-            self TYPE ts_self,
-           END OF ts_repository.
-    TYPES: BEGIN OF ts_resource,
-            repositories TYPE ts_repository,
-           END OF ts_resource.
-    TYPES: BEGIN OF ts_run_json_req,
-            resources TYPE ts_resource,
-           END OF ts_run_json_req.
 
     " list of TR IDs to sync to Git
     TYPES: tty_trids TYPE TABLE OF string.
@@ -105,20 +87,6 @@ PUBLIC SECTION.
             ev_commitid         TYPE string
         RETURNING VALUE(rv_success) TYPE string.
 
-    " kick off a run for specified ADO pipeline on the given CI branch
-    " iv_pipelineid - ADO pipeline ID to run CI, could be found in variable system.definitionId
-    " iv_branch - branch name to run CI
-    " iv_commitid - the commit to run CI with
-    " ev_runid - run ID kicked off
-    METHODS kickoff_pipeline_run_ado
-        IMPORTING
-            iv_pipelineid   TYPE string
-            iv_branch       TYPE string
-            iv_commitid     TYPE string
-        EXPORTING
-            ev_runid        TYPE string
-        RETURNING VALUE(rv_success) TYPE string.
-
     " get IDs of TRs after a given TR, or ID of latest TR if not given
     " iv_fromtrid - TR ID to start sync-ing for its next TR, or indicate to get latest TR ID if not provided
     " et_trids - list of TR IDs retrieved
@@ -149,10 +117,12 @@ PUBLIC SECTION.
     " save constructed sync status file to local disk
     " iv_mode - active/latest version mode
     " iv_file - sync status file name
+    " iv_trid - TR ID to specify in sync status
     CLASS-METHODS save_sync_status
         IMPORTING
             iv_mode TYPE string
             iv_file TYPE string
+            iv_trid TYPE string OPTIONAL
         RETURNING VALUE(rv_success) TYPE string.
 
     " fetch item content by ADO REST API
@@ -390,34 +360,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
   ENDMETHOD.
 
-  METHOD KICKOFF_PIPELINE_RUN_ADO.
-    " https://learn.microsoft.com/en-us/rest/api/azure/devops/pipelines/runs/run-pipeline?view=azure-devops-rest-7.1
-    DATA(runPath) = |{ me->orgid }/{ me->project }/_apis/pipelines/{ iv_pipelineid }/runs?api-version=7.1-preview.1|.
-    DATA(lv_branch) = |{ c_head }{ iv_branch }|.
-    DATA lv_status TYPE i.
-    DATA lt_ret_data TYPE /ui5/cl_json_parser=>t_entry_map.
-    DATA ls_json_req TYPE ts_run_json_req.
-    ls_json_req-resources-repositories-self-refName = lv_branch.
-    ls_json_req-resources-repositories-self-version = iv_commitid.
-    me->HTTP_POST_JSON(
-        EXPORTING
-            iv_path = runPath
-            iv_username = me->username
-            iv_pat = me->pat
-            iv_json = ls_json_req
-        IMPORTING
-            ev_status = lv_status
-            et_entry_map = lt_ret_data
-             ).
-    IF lv_status < 200 OR lv_status >= 300.
-        me->write_telemetry( iv_message = |KICKOFF_PIPELINE_RUN_ADO fails to create a run for branch { lv_branch }| ).
-        rv_success = abap_false.
-        EXIT.
-    ENDIF.
-    rv_success = abap_true.
-    ev_runid = lt_ret_data[ name = 'id' ]-value.
-  ENDMETHOD.
-
   METHOD BUILD_CODE_NAME.
     IF iv_commit_object-objtype = 'FUNC' OR iv_commit_object-objtype2 = 'FUNC'.
         " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
@@ -430,6 +372,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
         rv_name = |{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
     ENDIF.
   ENDMETHOD.
+
   METHOD GET_TRS.
 
     IF iv_fromtrid IS SUPPLIED.
@@ -472,9 +415,27 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD SAVE_SYNC_STATUS.
+
     DATA lv_json TYPE string.
     DATA lt_filecontent TYPE TABLE OF string.
-    build_sync_status( EXPORTING iv_mode = iv_mode IMPORTING ev_filecontent = lv_json ).
+
+    IF iv_trid IS SUPPLIED.
+        build_sync_status(
+            EXPORTING
+                iv_mode = iv_mode
+                iv_trid = iv_trid
+            IMPORTING
+                ev_filecontent = lv_json
+                 ).
+    ELSE.
+        build_sync_status(
+            EXPORTING
+                iv_mode = iv_mode
+            IMPORTING
+                ev_filecontent = lv_json
+                 ).
+    ENDIF.
+
     APPEND lv_json TO lt_filecontent.
     CALL FUNCTION 'GUI_DOWNLOAD'
           EXPORTING
@@ -489,6 +450,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     IF sy-subrc <> 0.
         rv_success = abap_false.
     ENDIF.
+
   ENDMETHOD.
 
   METHOD LOAD_SYNC_STATUS.

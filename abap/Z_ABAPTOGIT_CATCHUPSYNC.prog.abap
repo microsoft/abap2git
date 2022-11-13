@@ -7,13 +7,20 @@
 REPORT z_abaptogit_catchupsync.
 
 parameters:
-  p_pname type devclass LOWER CASE,
-  p_orgid type string LOWER CASE,
-  p_proj type string LOWER CASE,
-  p_repoid type string LOWER CASE,
-  p_prefix type string LOWER CASE DEFAULT 'users/system/',
-  p_usrnam type string LOWER CASE,
-  p_pat type string LOWER CASE.
+    " package name(s) split by comma
+    p_pname type devclass LOWER CASE,
+    " ADO organization name
+    p_orgid type string LOWER CASE,
+    " ADO project name
+    p_proj type string LOWER CASE,
+    " ADO Git repo GUID ID
+    p_repoid type string LOWER CASE,
+    " Git branch name prefix
+    p_prefix type string LOWER CASE DEFAULT 'users/system/',
+    " ADO user name
+    p_usrnam type string LOWER CASE,
+    " ADO personal access token
+    p_pat type string LOWER CASE.
 
 START-OF-SELECTION.
 
