@@ -18,14 +18,8 @@ PERFORM f_download.
 FORM f_download.
     WRITE / |Sync mode { p_mode }|.
     WRITE / |Start download at { sy-uzeit }|.
-    DATA lo_abaptogit TYPE REF TO ZCL_HRPY_UTILITY_ABAPTOGIT.
-    CREATE OBJECT lo_abaptogit
-        EXPORTING
-            iv_username = ''
-            iv_pat = ''
-            iv_orgid = ''
-            iv_repoid = ''
-            iv_project = ''.
+    DATA lo_abaptogit TYPE REF TO ZCL_UTILITY_ABAPTOGIT.
+    CREATE OBJECT lo_abaptogit.
     DATA lv_packages TYPE string.
     lv_packages = p_pname.
     lo_abaptogit->get_packages_codes(
