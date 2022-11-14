@@ -3,6 +3,7 @@
 *&---------------------------------------------------------------------*
 *& Program to catch up transport requests of ABAP objects for a system
 *& to Git repo
+*& this is to ensure the Git sync continuous after a break.
 *&---------------------------------------------------------------------*
 REPORT z_abaptogit_catchupsync.
 
