@@ -34,6 +34,13 @@ PUBLIC SECTION.
     " source lines of an ABAP object
     TYPES: tty_abaptext TYPE TABLE OF ABAPTXT255 INITIAL SIZE 0.
 
+    " cache for function group to package name mappings
+    TYPES: BEGIN OF ts_fugr_devclass,
+            fugr        TYPE string,
+            devclass    TYPE string,
+           END OF ts_fugr_devclass.
+    TYPES: tty_fugr_devclass TYPE TABLE OF ts_fugr_devclass.
+
     " constructor
     " io_objtelemetry - class object for telemetry
     " iv_methtelemetry - method name for telemetry
@@ -226,6 +233,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lv_haspackage LIKE abap_true.
     DATA lt_objname_parts TYPE TABLE OF string.
     DATA lt_classes TYPE TABLE OF string.
+    DATA lt_fugrs TYPE TABLE OF ts_fugr_devclass.
     DATA lv_success TYPE string.
 
     rv_success = abap_true.
@@ -342,8 +350,15 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             " function module case, find out function group and then the package function group belongs to
             lv_funcname = lv_objname.
             me->get_fugr( EXPORTING iv_objname = lv_funcname IMPORTING ev_fugrname = lv_fugr ).
-            SELECT SINGLE devclass FROM tadir INTO lv_devclass
-                WHERE obj_name = lv_fugr AND object = 'FUGR'.
+
+            " use cache for function group objects
+            IF line_exists( lt_fugrs[ fugr = lv_fugr ] ).
+                lv_devclass = lt_fugrs[ fugr = lv_fugr ]-devclass.
+            ELSE.
+                SELECT SINGLE devclass FROM tadir INTO lv_devclass
+                    WHERE obj_name = lv_fugr AND object = 'FUGR'.
+                APPEND VALUE ts_fugr_devclass( fugr = lv_fugr devclass = lv_devclass ) TO lt_fugrs.
+            ENDIF.
 
         ELSEIF lv_objtype = 'REPS'.
 
@@ -354,8 +369,15 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             ELSE.
                 lv_fugr = substring( val = lv_objname off = 1 len = strlen( lv_objname ) - 1 - 3 ).
             ENDIF.
-            SELECT SINGLE devclass FROM tadir INTO lv_devclass
-                WHERE obj_name = lv_fugr AND object = 'FUGR'.
+
+            " use cache for function group objects
+            IF line_exists( lt_fugrs[ fugr = lv_fugr ] ).
+                lv_devclass = lt_fugrs[ fugr = lv_fugr ]-devclass.
+            ELSE.
+                SELECT SINGLE devclass FROM tadir INTO lv_devclass
+                    WHERE obj_name = lv_fugr AND object = 'FUGR'.
+                APPEND VALUE ts_fugr_devclass( fugr = lv_fugr devclass = lv_devclass ) TO lt_fugrs.
+            ENDIF.
 
         ELSEIF lv_objtype = 'PROG' OR lv_objtype = 'INTF'.
 
