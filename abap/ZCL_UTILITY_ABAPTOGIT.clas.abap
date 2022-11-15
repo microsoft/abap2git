@@ -182,7 +182,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lt_commit_objects TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_commit_object.
     DATA lv_comment TYPE string.
     DATA lv_basebranch TYPE string.
-    DATA lv_runid TYPE string.
+    DATA lv_synccnt TYPE i.
 
     me->write_telemetry( iv_message = |start spot sync: { sy-uzeit }| iv_kind = 'info' ).
 
@@ -206,10 +206,16 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             iv_branch = lv_basebranch
             iv_comment = lv_comment
             it_commit_objects = lt_commit_objects
+        IMPORTING
+            ev_synccnt = lv_synccnt
              ).
     CHECK rv_success = abap_true.
 
-    me->write_telemetry( iv_message = |push TR { iv_trid } objects to system branch { lv_basebranch }: { sy-uzeit }| iv_kind = 'info' ).
+    IF lv_synccnt = 0.
+        me->write_telemetry( iv_message = |TR { iv_trid } has no objects matching criteria to sync to system branch { lv_basebranch }: { sy-uzeit }| iv_kind = 'info' ).
+    ELSE.
+        me->write_telemetry( iv_message = |push TR { iv_trid } objects ({ lv_synccnt }) to system branch { lv_basebranch }: { sy-uzeit }| iv_kind = 'info' ).
+    ENDIF.
 
   ENDMETHOD.
 
@@ -221,6 +227,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lt_commit_objects TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_commit_object.
     DATA lv_comment TYPE string.
     DATA lv_rootfolder TYPE string.
+    DATA lv_synccnt TYPE i.
 
     lv_rootfolder = iv_rootfolder.
     TRANSLATE lv_rootfolder TO UPPER CASE.
@@ -275,9 +282,15 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 iv_comment = lv_comment
                 iv_rootfolder = iv_rootfolder
                 it_commit_objects = lt_commit_objects
+            IMPORTING
+                ev_synccnt = lv_synccnt
                  ).
         CHECK rv_success = abap_true.
-        me->write_telemetry( iv_message = |caught up TR { watrid }| iv_kind = 'info' ).
+        IF lv_synccnt = 0.
+            me->write_telemetry( iv_message = |no push for TR { watrid }| iv_kind = 'info' ).
+        ELSE.
+            me->write_telemetry( iv_message = |caught up TR { watrid } with { lv_synccnt } object(s) | iv_kind = 'info' ).
+        ENDIF.
     ENDLOOP.
 
   ENDMETHOD.

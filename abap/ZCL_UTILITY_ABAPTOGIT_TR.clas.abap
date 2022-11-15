@@ -353,13 +353,17 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             SELECT SINGLE devclass FROM tadir INTO lv_devclass
                 WHERE obj_name = lv_fugr AND object = 'FUGR'.
 
-        ELSE.
+        ELSEIF lv_objtype = 'PROG' OR lv_objtype = 'INTF'.
 
             " program (include), interface case
 
             " find out which package the ABAP object belongs to
             SELECT SINGLE devclass INTO lv_devclass FROM tadir
                 WHERE object = lv_objtype AND obj_name = lv_objname.
+
+        ELSE.
+
+            me->write_telemetry( iv_message = |unsupported type { lv_objtype } for object { lv_objname }| iv_kind = 'info' ).
 
         ENDIF.
 

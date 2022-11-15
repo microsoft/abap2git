@@ -76,6 +76,7 @@ PUBLIC SECTION.
     " iv_comment - commit comment retrieved from get_tr_commit_objects
     " iv_rootfolder - the root folder in Git local clone for ABAP objects to add to, shared by all packages in SAP
     " it_commit_objects - table of ABAP objects to commit to Git, retrieved from get_tr_commit_objects
+    " ev_synccnt - count of objects to sync
     METHODS push_tr_commit_objects
         IMPORTING
             iv_trid             TYPE string
@@ -83,6 +84,8 @@ PUBLIC SECTION.
             iv_comment          TYPE string
             iv_rootfolder       TYPE string DEFAULT '/SRC/'
             it_commit_objects   TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_commit_object
+        EXPORTING
+            ev_synccnt          TYPE i
         RETURNING VALUE(rv_success) TYPE string.
 
     " get IDs of TRs after a given TR, or ID of latest TR if not given
@@ -321,6 +324,15 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
         lv_synccnt = lv_synccnt + 1.
 
     ENDLOOP.
+
+    IF ev_synccnt IS SUPPLIED.
+        ev_synccnt = lv_synccnt.
+    ENDIF.
+
+    IF lv_synccnt = 0.
+        rv_success = abap_true.
+        EXIT.
+    ENDIF.
 
     " update sync status file with the TR id
     build_sync_status(
