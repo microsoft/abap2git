@@ -38,9 +38,7 @@ CLASS zcl_im__badi_abaptogit_sync IMPLEMENTATION.
         ty_devclass    TYPE STANDARD TABLE OF devclass WITH DEFAULT KEY,
         ty_list_string TYPE STANDARD TABLE OF string WITH DEFAULT KEY.
 
-    DATA lt_object_package_name_list TYPE ty_devclass.
     DATA lv_package_names TYPE string.
-    DATA lv_devclass TYPE devclass.
 
     " K - workbench request only trying sync when workbench request is released
     DATA(lt_eligible_tr_types) = VALUE ty_list_string( ( `K` ) ).
@@ -51,15 +49,7 @@ CLASS zcl_im__badi_abaptogit_sync IMPLEMENTATION.
           EXIT.
         ENDIF.
 
-        LOOP AT objects INTO DATA(ls_object).
-
-          SELECT SINGLE devclass INTO @lv_devclass FROM tadir
-            WHERE object = @ls_object-object AND obj_name = @ls_object-obj_name.
-          " Update object_package_name_list for ABAPGit sync, it is possible to have one transport request's objects are from multiple packages
-          IF NOT line_exists( lt_object_package_name_list[ table_line = lv_devclass ] ).
-            APPEND lv_devclass TO lt_object_package_name_list.
-          ENDIF.
-        ENDLOOP.
+        " no simple way to find out package an ABAP object belongs, leave to abap2git to determine
 
         " TODO: specify package names to sync ABAP objects in a TR
         DATA: lt_package_list TYPE ty_devclass.
