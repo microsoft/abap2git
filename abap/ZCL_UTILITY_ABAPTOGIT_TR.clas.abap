@@ -349,7 +349,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
             " function include case, extract function group name and then the package function group belongs to
             " function include name as L + function group name + 3 characters
-            lv_fugr = substring( val = lv_objname off = 1 len = strlen( lv_objname ) - 1 - 3 ).
+            IF strlen( lv_objname ) < 4.
+                lv_fugr = ''.
+            ELSE.
+                lv_fugr = substring( val = lv_objname off = 1 len = strlen( lv_objname ) - 1 - 3 ).
+            ENDIF.
             SELECT SINGLE devclass FROM tadir INTO lv_devclass
                 WHERE obj_name = lv_fugr AND object = 'FUGR'.
 
@@ -454,7 +458,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     DATA lv_pname_filter TYPE string.
     SELECT SINGLE pname INTO @lv_pname_filter FROM tfdir WHERE funcname = @iv_objname.
-    ev_fugrname = lv_pname_filter+4.    " SAPL... as prefix for names in pname field
+    IF strlen( lv_pname_filter ) < 4.
+        ev_fugrname = ''.
+    ELSE.
+        ev_fugrname = lv_pname_filter+4.    " SAPL... as prefix for names in pname field
+    ENDIF.
 
   ENDMETHOD.
 
