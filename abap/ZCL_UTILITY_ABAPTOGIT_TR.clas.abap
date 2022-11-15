@@ -6,7 +6,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR DEFINITION
 
 PUBLIC SECTION.
 
-    " latest and active verion mode
+    " latest and active version mode
     CONSTANTS: c_latest_version     TYPE string VALUE 'latest',
                c_active_version     TYPE string VALUE 'active'.
 
@@ -63,6 +63,7 @@ PUBLIC SECTION.
     " iv_objtype - ABAP object type from table TADIR
     " iv_mode - active/latest version mode
     " iv_date/iv_time - date and time of versions no later than to select
+    " iv_findtest - require to find test class of a product class if applicable
     " ev_version_no - count of versions selected
     " cht_objversions - object versions selected
     METHODS get_versions_no
@@ -72,6 +73,7 @@ PUBLIC SECTION.
             iv_mode         TYPE string
             iv_date         TYPE d OPTIONAL
             iv_time         TYPE t OPTIONAL
+            iv_findtest     LIKE abap_true
         EXPORTING
             ev_version_no   TYPE i
         CHANGING
@@ -133,6 +135,7 @@ PRIVATE SECTION.
             iv_mode         TYPE string
             iv_date         TYPE d OPTIONAL
             iv_time         TYPE t OPTIONAL
+            iv_findtest     LIKE abap_true DEFAULT abap_true
         CHANGING
             cht_objversions TYPE tty_version_no OPTIONAL
         RETURNING VALUE(r_version_no) TYPE i.
@@ -199,9 +202,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lt_filecontent TYPE tty_abaptext.
     DATA lt_tclsfilecontent TYPE tty_abaptext.
     DATA lt_packagenames TYPE TABLE OF string.
+    DATA lv_packagename TYPE string.
     DATA lv_objtype2 TYPE string.
     DATA lv_devclass TYPE string.
-    DATA lv_delflag TYPE c.
     DATA lv_fugr TYPE string.
     DATA lv_filecontent TYPE string.
     DATA lv_tclsname TYPE string.
@@ -217,6 +220,13 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lv_taskdesc TYPE string.
     DATA lt_taskfields TYPE TABLE OF string.
     DATA lt_tasktexts TYPE TABLE OF string.
+    DATA lv_programm TYPE PROGRAMM.
+    DATA lv_classkey TYPE SEOCLSKEY.
+    DATA lv_classname TYPE tadir-obj_name.
+    DATA lv_haspackage LIKE abap_true.
+    DATA lt_objname_parts TYPE TABLE OF string.
+    DATA lt_classes TYPE TABLE OF string.
+    DATA lv_success TYPE string.
 
     rv_success = abap_true.
 
@@ -256,6 +266,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     " fetch tasks in a TR
     SELECT obj_name FROM e071 INTO TABLE @lt_tasks WHERE trkorr = @lv_trkorr AND object = 'RELE' AND pgmid = 'CORR'.
 
+    " append all tasks' description to the commit description
     LOOP AT lt_tasks INTO lv_task.
         CLEAR lt_taskfields.
         SPLIT lv_task AT ' ' INTO TABLE lt_taskfields.
@@ -266,6 +277,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     APPEND LINES OF lt_tasktexts TO lt_commentlines.
 
+    " commit description now contains TR description plus all tasks' description each line
     ev_comment = concat_lines_of( table = lt_commentlines sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
 
     CLEAR: lt_taskids, lt_taskfields, lt_tasktexts.
@@ -278,81 +290,143 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         DATA(lv_objname) = <fs_cs_request_object>-obj_name.
         DATA(lv_objtype) = <fs_cs_request_object>-object.
 
-        CLEAR lv_objtype2.
+        CLEAR: lv_objtype2, lv_devclass.
 
-        " find out which package the ABAP object belongs to
-        SELECT SINGLE devclass INTO lv_devclass FROM tadir
-            WHERE object = lv_objtype AND obj_name = lv_objname.
+        IF lv_objtype = 'CINC'
+            OR lv_objtype = 'CLSD'
+            OR lv_objtype = 'CPUB'
+            OR lv_objtype = 'CPRT'
+            OR lv_objtype = 'CPRI'
+            OR lv_objtype = 'METH'.
+
+            " a test class, class definition, public/protected/private section and method will not be located in table tadir
+            " need to find the product class it belongs to and then find the package the product class belongs to
+
+            IF lv_objtype = 'CINC'.
+                " test class name to product class name
+                lv_programm = lv_objname.
+                CALL FUNCTION 'SEO_CLASS_GET_NAME_BY_INCLUDE'
+                    EXPORTING
+                        progname = lv_programm
+                    IMPORTING
+                        clskey = lv_classkey.
+                lv_classname = lv_classkey.
+            ELSE.
+                IF lv_objtype = 'METH'.
+                    " class name <spaces> method name pattern
+                    CLEAR lt_objname_parts.
+                    SPLIT lv_objname AT ' ' INTO TABLE lt_objname_parts.
+                    lv_classname = lt_objname_parts[ 1 ].
+                ELSE.
+                    " for CLSD/CPUB/CPRT/CPRI case class name is provided
+                    lv_classname = lv_objname.
+                ENDIF.
+
+                IF line_exists( lt_classes[ table_line = lv_classname ] ).
+                    " this class has been processed, skip
+                    CONTINUE.
+                ELSE.
+                    " use the class name instead and ensure it's processed only one time
+                    APPEND lv_classname TO lt_classes.
+                    lv_objname = lv_classname.
+                    lv_objtype = 'CLAS'.
+                ENDIF.
+            ENDIF.
+
+            " find out which package the class belongs to
+            SELECT SINGLE devclass INTO lv_devclass FROM tadir
+                WHERE object = 'CLAS' AND obj_name = lv_classname.
+
+        ELSEIF lv_objtype = 'FUNC'.
+
+            " function module case, find out function group and then the package function group belongs to
+            lv_funcname = lv_objname.
+            me->get_fugr( EXPORTING iv_objname = lv_funcname IMPORTING ev_fugrname = lv_fugr ).
+            SELECT SINGLE devclass FROM tadir INTO lv_devclass
+                WHERE obj_name = lv_fugr AND object = 'FUGR'.
+
+        ELSEIF lv_objtype = 'REPS'.
+
+            " function include case, extract function group name and then the package function group belongs to
+            " function include name as L + function group name + 3 characters
+            lv_fugr = substring( val = lv_objname off = 1 len = strlen( lv_objname ) - 1 - 3 ).
+            SELECT SINGLE devclass FROM tadir INTO lv_devclass
+                WHERE obj_name = lv_fugr AND object = 'FUGR'.
+
+        ELSE.
+
+            " program (include), interface case
+
+            " find out which package the ABAP object belongs to
+            SELECT SINGLE devclass INTO lv_devclass FROM tadir
+                WHERE object = lv_objtype AND obj_name = lv_objname.
+
+        ENDIF.
+
+        lv_haspackage = abap_true.
+        IF sy-subrc <> 0.
+            " the ABAP object is not found from tadir, it may be a deleted object
+            lv_haspackage = abap_false.
+        ENDIF.
+
+        " fetch versions no later than given TR date/time
+        CLEAR lt_objversions.
+        lv_success = me->get_versions_no(
+            EXPORTING
+                iv_objname = lv_objname
+                iv_objtype = lv_objtype
+                iv_mode = c_latest_version
+                iv_date = ld_cs_request-h-as4date
+                iv_time = ld_cs_request-h-as4time
+                iv_findtest = abap_false
+            IMPORTING
+                ev_version_no = lv_version_no
+            CHANGING
+                cht_objversions = lt_objversions
+                ).
+        IF lv_success = abap_false AND lv_haspackage = abap_false.
+            " can't locate this object in table tadir and versions neither
+            " fail to find which package it belongs to and can't place it to ADO push payload
+            me->write_telemetry( iv_message = |deleted object { lv_objname } type { lv_objtype } can't be processed without package name available| ).
+            CONTINUE.
+        ENDIF.
 
         " is the object in one of the packages specified?
         CHECK line_exists( lt_packagenames[ table_line = lv_devclass ] ).
 
-        " find out whether it's a deletion for the object
-        SELECT SINGLE delflag INTO lv_delflag FROM tadir
-            WHERE object = lv_objtype AND obj_name = lv_objname.
+        " is there any version found?
+        CHECK lv_version_no > 0.
 
-        " fetch object content if not a deletion for the object
-        IF lv_delflag = ' '.
+        " fetch function group name in case of function module
+        IF lv_objtype = 'FUGR'.
+            lv_funcname = lv_objname.
+            lv_objtype2 = 'FUNC'.
+            me->get_fugr( EXPORTING iv_objname = lv_funcname IMPORTING ev_fugrname = lv_fugr ).
+        ENDIF.
 
-            " fetch versions no later than given TR date/time
-            CLEAR lt_objversions.
-            rv_success = me->get_versions_no(
-                EXPORTING
-                    iv_objname = lv_objname
-                    iv_objtype = lv_objtype
-                    iv_mode = c_latest_version
-                    iv_date = ld_cs_request-h-as4date
-                    iv_time = ld_cs_request-h-as4time
-                IMPORTING
-                    ev_version_no = lv_version_no
-                CHANGING
-                    cht_objversions = lt_objversions
-                    ).
-            CHECK rv_success = abap_true.
-            CHECK lv_version_no > 0.
+        " construct object content (and test class content won't be provided given not required to in fetching version above)
+        CLEAR lt_filecontent.
+        CLEAR lt_tclsfilecontent.
+        CLEAR lv_tclsfilecontent.
+        rv_success = me->build_code_content(
+            EXPORTING
+                iv_objname = lv_objname
+                iv_objtype = lv_objtype
+                it_objversions = lt_objversions
+            IMPORTING
+                et_filecontent = lt_filecontent
+                ev_tclsname = lv_tclsname
+                ev_tclstype = lv_tclstype
+                et_tclsfilecontent = lt_tclsfilecontent
+                ).
+        CHECK rv_success = abap_true.
 
-            " fetch function group name in case of function module
-            IF lv_objtype = 'FUGR'.
-                lv_funcname = lv_objname.
-                lv_objtype2 = 'FUNC'.
-                me->get_fugr( EXPORTING iv_objname = lv_funcname IMPORTING ev_fugrname = lv_fugr ).
-            ENDIF.
+        " stitch to string from source code lines
+        lv_filecontent = concat_lines_of( table = lt_filecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
 
-            " construct object content (and test class content if any)
-            CLEAR lt_filecontent.
-            CLEAR lt_tclsfilecontent.
-            CLEAR lv_tclsfilecontent.
-            rv_success = me->build_code_content(
-                EXPORTING
-                    iv_objname = lv_objname
-                    iv_objtype = lv_objtype
-                    it_objversions = lt_objversions
-                IMPORTING
-                    et_filecontent = lt_filecontent
-                    ev_tclsname = lv_tclsname
-                    ev_tclstype = lv_tclstype
-                    et_tclsfilecontent = lt_tclsfilecontent
-                    ).
-            CHECK rv_success = abap_true.
-
-            lv_filecontent = concat_lines_of( table = lt_filecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
-
-            " test class
-            IF lines( lt_tclsfilecontent ) > 0.
-                lv_tclsfilecontent = concat_lines_of( table = lt_tclsfilecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
-                TRANSLATE lv_tclsname TO UPPER CASE.
-                APPEND VALUE ts_commit_object(
-                    devclass = lv_devclass
-                    objname = lv_objname
-                    objtype = lv_tclstype
-                    objtype2 = lv_objtype2
-                    fugr = lv_fugr
-                    delflag = lv_delflag
-                    verno = lv_version_no
-                    filecontent = lv_tclsfilecontent
-                    ) TO it_commit_objects.
-            ENDIF.
-
+        IF lv_objtype = 'CINC'.
+            " following abapGit where class name is used for test class name instead of ====CCAU like one
+            lv_objname = lv_classname.
         ENDIF.
 
         TRANSLATE lv_objname TO UPPER CASE.
@@ -363,7 +437,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             objtype = lv_objtype
             objtype2 = lv_objtype2
             fugr = lv_fugr
-            delflag = lv_delflag
+            delflag = abap_false
             verno = lv_version_no
             filecontent = lv_filecontent
             ) TO it_commit_objects.
@@ -561,6 +635,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         ENDIF.
     ELSEIF iv_objtype = 'CLAS'.
         " class object case, multiple versions may return including public/protected/private sections and methods
+        " if test class required, its versions will be fetched together
         ev_version_no = me->get_class_versions_no(
             EXPORTING
                 iv_objname = iv_objname
@@ -568,10 +643,39 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                 iv_mode = iv_mode
                 iv_date = iv_date
                 iv_time = iv_time
+                iv_findtest = iv_findtest
             CHANGING
                 cht_objversions = cht_objversions
                  ).
         rv_success = abap_true.
+    ELSEIF iv_objtype = 'CINC'.
+        " in TR commit scenario test class will be requested separately
+        CLEAR lt_vers.
+        rv_success = me->get_versions(
+            EXPORTING
+                iv_objname = iv_objname
+                iv_objtype = 'CINC'
+            CHANGING
+                it_vers = lt_vers
+                 ).
+        CHECK rv_success = abap_true.
+        rv_success = me->get_valued_version(
+            EXPORTING
+                iv_mode = iv_mode
+                iv_date = iv_date
+                iv_time = iv_time
+            IMPORTING
+                ev_versno = lv_versno
+                ev_verscnt = ev_version_no
+            CHANGING
+                cht_vers = lt_vers
+                 ).
+        IF rv_success = abap_true AND cht_objversions IS SUPPLIED.
+            wa_objversion-objversionno = lv_versno.
+            wa_objversion-objname = iv_objname.
+            wa_objversion-objtype = 'CINC'.
+            APPEND wa_objversion TO cht_objversions.
+        ENDIF.
     ELSEIF iv_objtype = 'PROG'.
         " program/include case
         CLEAR lt_vers.
@@ -865,48 +969,52 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         ENDIF.
     ENDLOOP.
 
-    " test class of the class if any
-    lv_CLSKEY = lv_classname.
-    lv_LIMU = 'CINC'.
-    lv_INCTYPE = 'AU'.
-    CALL FUNCTION 'SEO_CLASS_GET_INCLUDE_BY_NAME'
-        EXPORTING
-            clskey = lv_CLSKEY
-            limu = lv_LIMU
-            inctype = lv_INCTYPE
-        IMPORTING
-            progname = lv_progm.
+    IF iv_findtest = abap_true.
 
-    lv_testclassname = lv_progm.
+        " test class of the class if any
+        lv_CLSKEY = lv_classname.
+        lv_LIMU = 'CINC'.
+        lv_INCTYPE = 'AU'.
+        CALL FUNCTION 'SEO_CLASS_GET_INCLUDE_BY_NAME'
+            EXPORTING
+                clskey = lv_CLSKEY
+                limu = lv_LIMU
+                inctype = lv_INCTYPE
+            IMPORTING
+                progname = lv_progm.
 
-    lv_objname = lv_testclassname.
-    CLEAR lt_vers.
-    me->get_versions(
-        EXPORTING
-            iv_objname = lv_objname
-            iv_objtype = 'CINC'
-        CHANGING
-            it_vers = lt_vers
-             ).
-    lv_success = me->get_valued_version(
-        EXPORTING
-            iv_mode = iv_mode
-            iv_date = iv_date
-            iv_time = iv_time
-        IMPORTING
-            ev_versno = lv_versno
-            ev_verscnt = lv_verscnt
-        CHANGING
-            cht_vers = lt_vers
-             ).
-    IF lv_success = abap_true AND cht_objversions IS SUPPLIED.
-        wa_objversion-objversionno = lv_versno.
-        wa_objversion-objname = lv_objname.
-        wa_objversion-objtype = 'CINC'.
-        APPEND wa_objversion TO cht_objversions.
-    ENDIF.
-    IF lv_verscnt > r_version_no.
-        r_version_no = lv_verscnt.
+        lv_testclassname = lv_progm.
+
+        lv_objname = lv_testclassname.
+        CLEAR lt_vers.
+        me->get_versions(
+            EXPORTING
+                iv_objname = lv_objname
+                iv_objtype = 'CINC'
+            CHANGING
+                it_vers = lt_vers
+                 ).
+        lv_success = me->get_valued_version(
+            EXPORTING
+                iv_mode = iv_mode
+                iv_date = iv_date
+                iv_time = iv_time
+            IMPORTING
+                ev_versno = lv_versno
+                ev_verscnt = lv_verscnt
+            CHANGING
+                cht_vers = lt_vers
+                 ).
+        IF lv_success = abap_true AND cht_objversions IS SUPPLIED.
+            wa_objversion-objversionno = lv_versno.
+            wa_objversion-objname = lv_objname.
+            wa_objversion-objtype = 'CINC'.
+            APPEND wa_objversion TO cht_objversions.
+        ENDIF.
+        IF lv_verscnt > r_version_no.
+            r_version_no = lv_verscnt.
+        ENDIF.
+
     ENDIF.
 
   ENDMETHOD.

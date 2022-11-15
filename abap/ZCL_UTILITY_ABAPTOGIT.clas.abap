@@ -3,7 +3,6 @@
 " Multiple packages will share the same Git repo
 " Multiple SAP systems in the landscape of a service line will share the same Git repo
 " in respective branches
-" CI branch could be created for a TR and build pipeline triggered on it
 " Following ABAP objects are included in sync-ing:
 " Class, Function Module, Program, Include, Test Class.
 " Following ABAP objects are not yet included in sync-ing:
@@ -89,13 +88,11 @@ PUBLIC SECTION.
     " spot sync ABAP objects in a TR
     " iv_trid - TR ID
     " iv_packagenames - package names to include in commit, separated by comma
-    " iv_pipelineid - ADO build pipeline ID
     " iv_prefix - branch prefix
     METHODS spotsync_tr
         IMPORTING
             iv_trid         TYPE string
             iv_packagenames TYPE string
-            iv_pipelineid   TYPE string
             iv_prefix       TYPE string DEFAULT 'users/system/'
         RETURNING VALUE(rv_success) TYPE string.
 
@@ -116,7 +113,7 @@ PUBLIC SECTION.
         IMPORTING
             iv_branch       TYPE string
             iv_packagenames TYPE string
-            iv_rootfolder   TYPE string DEFAULT '/src/'
+            iv_rootfolder   TYPE string DEFAULT '/SRC/'
         RETURNING VALUE(rv_success) TYPE string.
 
 PROTECTED SECTION.
@@ -146,6 +143,8 @@ PRIVATE SECTION.
             iv_kind     TYPE string DEFAULT 'error'.
 
 ENDCLASS.
+
+
 
 CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
@@ -183,7 +182,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lt_commit_objects TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_commit_object.
     DATA lv_comment TYPE string.
     DATA lv_basebranch TYPE string.
-    DATA lv_commitid TYPE string.
     DATA lv_runid TYPE string.
 
     me->write_telemetry( iv_message = |start spot sync: { sy-uzeit }| iv_kind = 'info' ).
@@ -208,12 +206,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             iv_branch = lv_basebranch
             iv_comment = lv_comment
             it_commit_objects = lt_commit_objects
-        IMPORTING
-            ev_commitid = lv_commitid
              ).
     CHECK rv_success = abap_true.
 
-    me->write_telemetry( iv_message = |push TR { iv_trid } objects to system branch { lv_basebranch } with commit { lv_commitid }: { sy-uzeit }| iv_kind = 'info' ).
+    me->write_telemetry( iv_message = |push TR { iv_trid } objects to system branch { lv_basebranch }: { sy-uzeit }| iv_kind = 'info' ).
 
   ENDMETHOD.
 
@@ -225,7 +221,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lt_commit_objects TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_commit_object.
     DATA lv_comment TYPE string.
     DATA lv_rootfolder TYPE string.
-    DATA lv_commitid TYPE string.
 
     lv_rootfolder = iv_rootfolder.
     TRANSLATE lv_rootfolder TO UPPER CASE.
@@ -280,11 +275,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 iv_comment = lv_comment
                 iv_rootfolder = iv_rootfolder
                 it_commit_objects = lt_commit_objects
-             IMPORTING
-                ev_commitid = lv_commitid
                  ).
         CHECK rv_success = abap_true.
-        me->write_telemetry( iv_message = |caught up TR { watrid } to { lv_commitid }| iv_kind = 'info' ).
+        me->write_telemetry( iv_message = |caught up TR { watrid }| iv_kind = 'info' ).
     ENDLOOP.
 
   ENDMETHOD.
@@ -402,6 +395,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                     iv_mode = iv_mode
                     iv_date = lv_dat
                     iv_time = lv_tim
+                    iv_findtest = abap_true
                 IMPORTING
                     ev_version_no = lv_version_no
                 CHANGING
@@ -414,6 +408,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                     iv_objname = lv_objname3
                     iv_objtype = lv_objtype
                     iv_mode = iv_mode
+                    iv_findtest = abap_true
                 IMPORTING
                     ev_version_no = lv_version_no
                 CHANGING
@@ -465,7 +460,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             rv_success = abap_false.
         ENDIF.
 
-        " save the object content to local disk file for test class if any
+        " save the object content to local disk file for test class if any since it must be attached to a product class
         IF lines( lt_tclsfilecontent ) > 0.
             " following abapGit where class name is used for test class name instead of ====CCAU like one
             lv_commit_object-objname = lv_objname3.

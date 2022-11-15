@@ -1,9 +1,10 @@
-" Helper class to talk to ADO REST API for Git and build pipeline operations
+" Helper class to talk to ADO REST API for Git operations
 " minor change
 CLASS ZCL_UTILITY_ABAPTOGIT_ADO DEFINITION
   PUBLIC
   FINAL
   CREATE PUBLIC .
+
 
 PUBLIC SECTION.
 
@@ -75,16 +76,13 @@ PUBLIC SECTION.
     " iv_comment - commit comment retrieved from get_tr_commit_objects
     " iv_rootfolder - the root folder in Git local clone for ABAP objects to add to, shared by all packages in SAP
     " it_commit_objects - table of ABAP objects to commit to Git, retrieved from get_tr_commit_objects
-    " ev_commitid - commit ID of push done
     METHODS push_tr_commit_objects
         IMPORTING
             iv_trid             TYPE string
             iv_branch           TYPE string
             iv_comment          TYPE string
-            iv_rootfolder       TYPE string DEFAULT '/src/'
+            iv_rootfolder       TYPE string DEFAULT '/SRC/'
             it_commit_objects   TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_commit_object
-        EXPORTING
-            ev_commitid         TYPE string
         RETURNING VALUE(rv_success) TYPE string.
 
     " get IDs of TRs after a given TR, or ID of latest TR if not given
@@ -191,8 +189,6 @@ PRIVATE SECTION.
             iv_branch   TYPE string
             iv_commit   TYPE ts_commit
             iv_commitid TYPE string
-        EXPORTING
-            ev_commitid TYPE string
         RETURNING VALUE(rv_success) TYPE string.
 
     " create HTTP client for ADO REST API
@@ -354,14 +350,15 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             iv_branch = iv_branch
             iv_commit = lv_commit
             iv_commitid = lv_commitid
-        IMPORTING
-            ev_commitid = ev_commitid
              ).
 
   ENDMETHOD.
 
   METHOD BUILD_CODE_NAME.
     IF iv_commit_object-objtype = 'FUNC' OR iv_commit_object-objtype2 = 'FUNC'.
+        " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
+        rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
+    ELSEIF iv_commit_object-objtype = 'REPS' OR iv_commit_object-fugr IS NOT INITIAL.
         " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
         rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
     ELSEIF iv_commit_object-objtype = 'CINC'.
@@ -554,7 +551,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
         me->write_telemetry( iv_message = |PUSH_ADO fails to push to Git for branch { lv_branch } on top of commit { iv_commitid }| ).
         rv_success = abap_false.
     ENDIF.
-    ev_commitId = lt_ret_data[ name = 'newObjectId' parent = '/refUpdates/1' ]-value.
   ENDMETHOD.
 
   METHOD CREATE_HTTP_CLIENT.
