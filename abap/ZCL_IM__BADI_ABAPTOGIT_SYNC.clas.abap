@@ -80,7 +80,7 @@ CLASS zcl_im__badi_abaptogit_sync IMPLEMENTATION.
     " TODO: specify the ADO build pipeline ID
     DATA lv_pipelineid TYPE string.
 
-    " TODO: specify the Git branch name prefix, usually users/service line/purpose/,
+    " TODO: specify the Git branch name prefix, usually users/system/,
     " for the branch holding the ABAP objects
     DATA lv_baseprefix TYPE string.
 

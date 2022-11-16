@@ -362,21 +362,36 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
         ELSEIF lv_objtype = 'REPS'.
 
-            " function include case, extract function group name and then the package function group belongs to
-            " function include name as L + function group name + 3 characters
-            IF strlen( lv_objname ) < 4.
-                lv_fugr = ''.
-            ELSE.
-                lv_fugr = substring( val = lv_objname off = 1 len = strlen( lv_objname ) - 1 - 3 ).
-            ENDIF.
+            " could be repair of an object
+            " need to search object type to replace 'REPS'
+            SELECT SINGLE object FROM tadir INTO lv_objtype
+                WHERE obj_name = lv_objname.
+            IF sy-subrc = 0.
 
-            " use cache for function group objects
-            IF line_exists( lt_fugrs[ fugr = lv_fugr ] ).
-                lv_devclass = lt_fugrs[ fugr = lv_fugr ]-devclass.
+                " found, use the right type of the object
+                " find out which package the ABAP object belongs to
+                SELECT SINGLE devclass INTO lv_devclass FROM tadir
+                    WHERE object = lv_objtype AND obj_name = lv_objname.
+
             ELSE.
-                SELECT SINGLE devclass FROM tadir INTO lv_devclass
-                    WHERE obj_name = lv_fugr AND object = 'FUGR'.
-                APPEND VALUE ts_fugr_devclass( fugr = lv_fugr devclass = lv_devclass ) TO lt_fugrs.
+
+                " function include case, extract function group name and then the package function group belongs to
+                " function include name as L + function group name + 3 characters
+                IF strlen( lv_objname ) < 4.
+                    lv_fugr = ''.
+                ELSE.
+                    lv_fugr = substring( val = lv_objname off = 1 len = strlen( lv_objname ) - 1 - 3 ).
+                ENDIF.
+
+                " use cache for function group objects
+                IF line_exists( lt_fugrs[ fugr = lv_fugr ] ).
+                    lv_devclass = lt_fugrs[ fugr = lv_fugr ]-devclass.
+                ELSE.
+                    SELECT SINGLE devclass FROM tadir INTO lv_devclass
+                        WHERE obj_name = lv_fugr AND object = 'FUGR'.
+                    APPEND VALUE ts_fugr_devclass( fugr = lv_fugr devclass = lv_devclass ) TO lt_fugrs.
+                ENDIF.
+
             ENDIF.
 
         ELSEIF lv_objtype = 'PROG' OR lv_objtype = 'INTF'.

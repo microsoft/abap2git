@@ -370,7 +370,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     IF iv_commit_object-objtype = 'FUNC' OR iv_commit_object-objtype2 = 'FUNC'.
         " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
         rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
-    ELSEIF iv_commit_object-objtype = 'REPS' OR iv_commit_object-fugr IS NOT INITIAL.
+    ELSEIF iv_commit_object-objtype = 'REPS' AND iv_commit_object-fugr IS NOT INITIAL.
         " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
         rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
     ELSEIF iv_commit_object-objtype = 'CINC'.
