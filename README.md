@@ -9,14 +9,14 @@
 ## Features
 1. Download ABAP objects in specific package(s) of an SAP system to local folder, each package a folder.
 2. Download ABAP objects in all Y*/Z* customization packages to local folder.
-3. Support active version mode and latest version mode. In active version mode, for each ABAP object, active version, if any, otherwise latest version, will be downloaded; in latest version mode, for each ABAP object, only latest version will be downloaded, if not available the object will not be downloaded. Active version mode is best to download all current version of the ABAP objects for code inspection and analysis; latest version mode is best for continuous integration purpose.
+3. Support active version mode and latest version mode. In active version mode, for each ABAP object, active version, if any, otherwise latest version, will be downloaded; in latest version mode, for each ABAP object, only latest version will be downloaded or a released version no later than an optional released TR (to sync to that specific snapshot of the system), if not available the object will not be downloaded. Active version mode is best to download all current version of the ABAP objects for code inspection and analysis; latest version mode is best for continuous integration purpose.
 4. Sync a specific released TR to specific Git repo branch, provided the ABAP objects in that branch are downloaded in latest version mode above.
-5. Catchup: sync the Git repo branch to latest TR by generating commit for each TR between last sync-ed one and latest one.
-6. Upon sync-ing the released TR to Git repo branch, create a private branch for the owner of TR and kick off specific ADO continuous integration build pipeline to run on that private branch.
+5. Catchup: sync the Git repo branch to latest TR by generating commit for each TR between last sync-ed one and latest one, this helps you bring the git repo in sync if #4 is not run to catch some TRs.
+6. Upon sync-ing the released TR to Git repo branch, the branch could be added to CI branch in the ADO build pipeline to be triggered a run with ADO out-of-box feature.
 
 ## How To
 * Add the classes and reports in abap folder to the target SAP system.
-* Create a branch for target SAP system in the Git repository, suggested branch name is "users/service line/purpose/system id", for example, users/finance/ci/sys, or users/finance/develop/sys.
+* Create a branch for target SAP system in the Git repository, suggested branch name is "users/system/system id", for example, users/system/sy1.
 * Run the report Z_ABAPTOGIT_LOCALSYNC to download initial ABAP objects with active or latest version mode.
 * Use git command/CLI/... to push the initial objects.
 * Register the ABAP Test Cockpit (ATC) BAdI class ZCL_IM_BADI_ABAPTOGIT_SYNC in abap folder to sync released TR to the Git branch with downloaded objects in latest version mode.
