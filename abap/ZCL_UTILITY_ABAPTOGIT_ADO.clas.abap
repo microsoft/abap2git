@@ -376,6 +376,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     ELSEIF iv_commit_object-objtype = 'CINC'.
         " test class named as <class name>.clas.testclasses.abap, following abapGit
         rv_name = |{ iv_commit_object-objname }.clas.testclasses.abap|.
+    ELSEIF iv_commit_object-objtype = 'ENHO'.
+        " enhancement implementation named as <enhancement name>.enho.abap, not following abapGit
+        rv_name = |{ iv_commit_object-objname }.enho.abap|.
     ELSE.
         " others named as <object name>.<object type, PROG|CLAS|INTF|...>.abap, following abapGit
         rv_name = |{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
