@@ -134,6 +134,16 @@ PRIVATE SECTION.
             abaptext    TYPE tty_abaptext
         RETURNING VALUE(rv_success) TYPE string.
 
+    " get source code lines for enhancement implementation
+    METHODS get_code_lines_enho
+        IMPORTING
+            iv_version  TYPE versno
+            iv_objname  TYPE versobjnam
+            iv_logdest  TYPE rfcdest
+        EXPORTING
+            abaptext    TYPE tty_abaptext
+        RETURNING VALUE(rv_success) TYPE string.
+
     " get class object version (for public/protected/private sections in definition and method implementations)
     METHODS get_class_versions_no
         IMPORTING
@@ -255,7 +265,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         ERROR_OCCURED =              1
         NO_AUTHORIZATION =           2.
     IF sy-subrc <> 0.
-        me->write_telemetry( iv_message = |GET_TR_COMMIT_OBJECTS fails to call TR_READ_REQUEST subrc { sy-subrc }| ).
+        me->write_telemetry( iv_message = |GET_TR_COMMIT_OBJECTS fails to call TR_READ_REQUEST with '{ lv_trkorr }' subrc { sy-subrc }| ).
         rv_success = abap_false.
         EXIT.
     ENDIF.
@@ -269,7 +279,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     " construct Git commit description carrying TR ID, owner and original description
     " the Git commit can't has committer as the TR owner, instead, on-behalf-of the owner by user name/PAT specified
-    APPEND |[TR # { iv_trid }] [OWNER: { ld_cs_request-h-as4user }] DESCRIPTION: { ld_cs_request-h-as4text }| TO lt_commentlines.
+    APPEND |{ iv_trid }\|{ ld_cs_request-h-as4user }\|{ ld_cs_request-h-as4text }| TO lt_commentlines.
 
     " fetch tasks in a TR
     SELECT obj_name FROM e071 INTO TABLE @lt_tasks WHERE trkorr = @lv_trkorr AND object = 'RELE' AND pgmid = 'CORR'.
@@ -394,9 +404,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
             ENDIF.
 
-        ELSEIF lv_objtype = 'PROG' OR lv_objtype = 'INTF'.
+        ELSEIF lv_objtype = 'PROG' OR lv_objtype = 'INTF' OR lv_objtype = 'ENHO'.
 
-            " program (include), interface case
+            " program (include), interface, enhancement implementation case
 
             " find out which package the ABAP object belongs to
             SELECT SINGLE devclass INTO lv_devclass FROM tadir
@@ -541,6 +551,93 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD GET_CODE_LINES_ENHO.
+
+    DATA lv_enhancement_id TYPE ENHNAME.
+    DATA r_vers TYPE REF TO IF_ENH_TOOL.
+    DATA lv_state type r3state.
+    DATA lv_tooltype TYPE enhtooltype.
+    DATA:   l_clas_data   TYPE ENHCLASSMETHDATA,
+            l_fugr_data   TYPE ENHFUGRDATA,
+            l_hook_data   TYPE ENH_HOOK_ADMIN.
+
+    rv_success = abap_false.
+
+    lv_enhancement_id = iv_objname.
+
+    TRY.
+        CALL METHOD cl_enh_factory=>get_enhancement
+            EXPORTING
+                enhancement_id = lv_enhancement_id
+                versno = iv_version
+                rfcdestination = iv_logdest
+            RECEIVING
+                enhancement = r_vers.
+    CATCH CX_ENH_IO_ERROR.
+        EXIT.
+    CATCH CX_ENH_ROOT.
+        EXIT.
+    ENDTRY.
+
+    cl_enh_cache=>refresh_enh_cache( enhname = lv_enhancement_id ).
+    lv_tooltype = r_vers->get_tool( ).
+
+    lv_state = 'A'.
+
+    CASE lv_tooltype.
+
+        WHEN 'CLASENH' OR 'INTFENH'.
+            TRY.
+                CALL METHOD r_vers->if_enh_object~get_data
+                    EXPORTING
+                        version = lv_state
+                    IMPORTING
+                        DATA    = l_clas_data.
+                APPEND LINES OF l_clas_data-enh_eimpsource TO abaptext.
+                LOOP AT l_clas_data-enh_methsources INTO DATA(wa_enh_meth).
+                    APPEND '' TO abaptext.
+                    APPEND '' TO abaptext.
+                    APPEND LINES OF wa_enh_meth-source TO abaptext.
+                ENDLOOP.
+                rv_success = abap_true.
+            CATCH CX_ENH_NO_VALID_INPUT_TYPE .
+                EXIT.
+            ENDTRY.
+        WHEN 'FUGRENH'.
+            TRY.
+                CALL METHOD r_vers->if_enh_object~get_data
+                    EXPORTING
+                        version = lv_state
+                    IMPORTING
+                        DATA    = l_fugr_data.
+                " TODO function group case
+            CATCH CX_ENH_NO_VALID_INPUT_TYPE .
+                EXIT.
+            ENDTRY.
+        WHEN 'BADI_IMPL'.
+            " BAdI case has no code to produce
+        WHEN 'HOOK_IMPL'.
+            TRY.
+                CALL METHOD r_vers->if_enh_object~get_data
+                    EXPORTING
+                        version = lv_state
+                    IMPORTING
+                        DATA    = l_hook_data.
+                 " stitch all enhancement ID source code lines to one file
+                 LOOP AT l_hook_data-hook_impls INTO DATA(wa_hook_impl).
+                    APPEND |ENHANCEMENT { wa_hook_impl-id } { iv_objname }.| TO abaptext.
+                    APPEND LINES OF wa_hook_impl-source TO abaptext.
+                    APPEND |ENDENHANCEMENT.| TO abaptext.
+                 ENDLOOP.
+                 APPEND '' TO abaptext.
+                 rv_success = abap_true.
+            CATCH CX_ENH_NO_VALID_INPUT_TYPE .
+                EXIT.
+            ENDTRY.
+    ENDCASE.
+
+  ENDMETHOD.
+
   METHOD BUILD_CODE_CONTENT.
 
     DATA lt_abaptext TYPE tty_abaptext.
@@ -563,16 +660,27 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
         CLEAR lt_abaptext.
 
-        lv_success = me->get_code_lines(
-            EXPORTING
-                iv_version = waver-objversionno
-                iv_objname = waver-objname
-                iv_objtype = waver-objtype
-                iv_logdest = ''
-            IMPORTING
-                linecount = lv_linecount
-                abaptext = lt_abaptext
-                ).
+        IF waver-objtype = 'ENHO'.
+            lv_success = me->get_code_lines_enho(
+                EXPORTING
+                    iv_version = waver-objversionno
+                    iv_objname = waver-objname
+                    iv_logdest = ''
+                IMPORTING
+                    abaptext = lt_abaptext
+                    ).
+        ELSE.
+            lv_success = me->get_code_lines(
+                EXPORTING
+                    iv_version = waver-objversionno
+                    iv_objname = waver-objname
+                    iv_objtype = waver-objtype
+                    iv_logdest = ''
+                IMPORTING
+                    linecount = lv_linecount
+                    abaptext = lt_abaptext
+                    ).
+        ENDIF.
         IF lv_success = abap_false.
             rv_success = abap_false.
             EXIT.
@@ -807,6 +915,34 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             wa_objversion-objversionno = lv_versno.
             wa_objversion-objname = iv_objname.
             wa_objversion-objtype = 'INTF'.
+            APPEND wa_objversion TO cht_objversions.
+        ENDIF.
+    ELSEIF iv_objtype = 'ENHO'.
+        " enhancement implementation case
+        CLEAR lt_vers.
+        rv_success = me->get_versions(
+            EXPORTING
+                iv_objname = iv_objname
+                iv_objtype = 'ENHO'
+            CHANGING
+                it_vers = lt_vers
+                 ).
+        CHECK rv_success = abap_true.
+        rv_success = me->get_valued_version(
+            EXPORTING
+                iv_mode = iv_mode
+                iv_date = iv_date
+                iv_time = iv_time
+            IMPORTING
+                ev_versno = lv_versno
+                ev_verscnt = ev_version_no
+            CHANGING
+                cht_vers = lt_vers
+                 ).
+        IF rv_success = abap_true AND cht_objversions IS SUPPLIED.
+            wa_objversion-objversionno = lv_versno.
+            wa_objversion-objname = iv_objname.
+            wa_objversion-objtype = 'ENHO'.
             APPEND wa_objversion TO cht_objversions.
         ENDIF.
     ELSE.

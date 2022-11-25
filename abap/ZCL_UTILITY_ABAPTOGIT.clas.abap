@@ -4,9 +4,9 @@
 " Multiple SAP systems in the landscape of a service line will share the same Git repo
 " in respective branches
 " Following ABAP objects are included in sync-ing:
-" Class, Function Module, Program, Include, Test Class, Interface.
+" Class, Function Module, Program, Include, Test Class, Interface, enhancement object (hook implementation, class).
 " Following ABAP objects are not yet included in sync-ing:
-" Data table related objects, enhancement objects.
+" Data table related objects, enhancement objects (others).
 " Deleted objects are not sync-ed since it's not found which package it was in.
 " Two modes are suggested in sync-ing to Git repo:
 " 1. Latest version mode, where latest version of an ABAP object, if any, is valued while
