@@ -961,8 +961,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     SORT cht_vers DESCENDING BY versno.
 
     IF iv_date IS SUPPLIED AND iv_time IS SUPPLIED AND iv_date IS NOT INITIAL AND iv_time IS NOT INITIAL.
-        " remove version later than given time, keep active version
-        DELETE cht_vers WHERE versno <> 0 AND ( datum > iv_date OR ( datum = iv_date AND zeit > iv_time ) ).
+        " remove version later than given time, keep active/inactive version
+        DELETE cht_vers WHERE versno <> 0 AND versno <> 99999 AND ( datum > iv_date OR ( datum = iv_date AND zeit > iv_time ) ).
     ENDIF.
 
     IF lines( cht_vers ) = 0.
@@ -971,8 +971,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     ENDIF.
 
     IF lv_mode = c_latest_version.
-        " exclude active version
-        DELETE cht_vers WHERE versno = 0.
+        " exclude active/inactive version
+        DELETE cht_vers WHERE versno = 0 OR versno = 99999.
         ev_verscnt = lines( cht_vers ).
         IF ev_verscnt = 0.
             " no latest released version available
@@ -984,6 +984,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             rv_success = abap_true.
         ENDIF.
     ELSEIF lv_mode = c_active_version.
+        " exclude inactive version
+        DELETE cht_vers WHERE versno = 99999.
         ev_verscnt = lines( cht_vers ).
         IF line_exists( cht_vers[ versno = 0 ] ).
             " active version available, use it
