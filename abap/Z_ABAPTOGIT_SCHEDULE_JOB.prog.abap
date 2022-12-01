@@ -52,10 +52,6 @@ PERFORM f_main.
 
 FORM f_main.
   DATA lv_query                     TYPE string.
-  DATA lv_current_timestamp         TYPE timestamp.
-  DATA lv_last_job_timestamp        TYPE timestamp.
-  DATA rv_secs                      TYPE tzntstmps. " intentional use TZNTSTMPS to ignore after decimal
-  DATA lv_schedule_start            TYPE timestamp.
   DATA lv_current_time_string(6)    TYPE c.
   DATA lv_start_time_string(6)      TYPE c.
   DATA lv_two_day_ago               TYPE sy-datum.
@@ -159,10 +155,9 @@ FORM schedule_catchup_abaptogit USING iv_schedule_date  TYPE btcsdldate
                                       iv_baseprefix     TYPE string
                                       iv_username       TYPE string
                                       iv_pat            TYPE string.
-  DATA: rt_tstmp         TYPE timestamp,
+  DATA: 
         lv_system_date   TYPE btcsdate,
         lv_system_time   TYPE btcstime,
-        lv_utc_timestamp TYPE timestamp,
         lv_jobname       TYPE btcjob,
         lv_jobcount      TYPE btcjobcnt.
 
