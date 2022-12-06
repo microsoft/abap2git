@@ -25,6 +25,8 @@ PUBLIC SECTION.
             objtype     TYPE string,
             objtype2    TYPE string,
             fugr        TYPE string,
+            progcls     TYPE string,
+            subc        TYPE string,
             delflag     TYPE string,
             verno       TYPE i,
             filecontent TYPE string,
@@ -107,9 +109,80 @@ PUBLIC SECTION.
             et_tclsfilecontent  TYPE tty_abaptext
         RETURNING VALUE(rv_success) TYPE string.
 
+    " construct ABAP data table object description content
+    " iv_objname - ABAP object name from table TADIR
+    " iv_version - object version
+    " ev_filecontent - file content
+    " et_filecontent - file content lines
+    METHODS build_data_table_content
+        IMPORTING
+            iv_objname          TYPE e071-obj_name
+            iv_version          TYPE versno
+        EXPORTING
+            ev_filecontent      TYPE string
+            et_filecontent      TYPE tty_abaptext
+        RETURNING VALUE(rv_success) TYPE string.
+
+    " remark: OOB program RPDASC00 also dumps schema/PCR but takes background job privilege to run
+    " and then fetch spools log from WRITE output and wait for job finish -- complicated and error prone
+    " remark: upon releasing customizing TR the snapshot of schema/PCR is kept though SAP doesn't keep
+    " all old versions, it's reliable to keep the snapshot as Git commit at the same time to reflect
+    " what version the TR keeps and transports later
+
+    " construct HR/payroll schema language code content
+    " iv_schemaname - schema name
+    " et_filecontent - schema code content lines
+    METHODS build_schema_content_active
+        IMPORTING
+            iv_schemaname   TYPE string
+        EXPORTING
+            et_filecontent  TYPE tty_abaptext.
+
+    " construct HR/payroll personnel calculation rule code content
+    " iv_pcrname - PCR name
+    " et_filecontent - PCR code content lines
+    METHODS build_pcr_content_active
+        IMPORTING
+            iv_pcrname      TYPE string
+        EXPORTING
+            et_filecontent  TYPE tty_abaptext.
+
 PROTECTED SECTION.
 
 PRIVATE SECTION.
+
+    CONSTANTS c_en TYPE spras VALUE 'E'.
+
+    " structure for data table description
+    TYPES: BEGIN OF ty_dd02v,
+            tabname TYPE string,
+            ddlanguage TYPE string,
+            tabclass TYPE string,
+            clidep TYPE string,
+            ddtext TYPE string,
+            mainflag TYPE string,
+            contflag TYPE string,
+            shlpexi TYPE string,
+           END OF ty_dd02v.
+    TYPES: BEGIN OF ty_data_table_field,
+            fieldname TYPE string,
+            keyflag TYPE string,
+            rollname TYPE string,
+            adminfield TYPE string,
+            datatype TYPE string,
+            leng TYPE i,
+            decimals TYPE i,
+            notnull TYPE string,
+            ddtext TYPE string,
+            domname TYPE string,
+            shlporigin TYPE string,
+            comptype TYPE string,
+           END OF ty_data_table_field.
+    TYPES: tty_data_table_field TYPE TABLE OF ty_data_table_field WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_data_table_desc,
+            dd02v TYPE ty_dd02v,
+            dd03v TYPE tty_data_table_field,
+           END OF ty_data_table_desc.
 
     " telemetry callback
     DATA oref_telemetry TYPE REF TO object.
@@ -220,6 +293,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lt_tclsfilecontent TYPE tty_abaptext.
     DATA lt_packagenames TYPE TABLE OF string.
     DATA lv_packagename TYPE string.
+    DATA lv_objname2 TYPE string.
     DATA lv_objtype2 TYPE string.
     DATA lv_devclass TYPE string.
     DATA lv_fugr TYPE string.
@@ -244,6 +318,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lt_objname_parts TYPE TABLE OF string.
     DATA lt_classes TYPE TABLE OF string.
     DATA lt_fugrs TYPE TABLE OF ts_fugr_devclass.
+    DATA lv_cdate TYPE cdate.
+    DATA lv_udate TYPE aedat.
+    DATA lv_progcls TYPE t52ba-pwert.
+    DATA lv_subc TYPE reposrc-subc.
     DATA lv_success TYPE string.
 
     rv_success = abap_true.
@@ -270,9 +348,16 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         EXIT.
     ENDIF.
 
-    " only support TR
-    IF ld_cs_request-h-trfunction <> 'K'.
-        me->write_telemetry( iv_message = |GET_TR_COMMIT_OBJECTS meets request type { ld_cs_request-h-trfunction }| ).
+    " only support workbench/customizing TR
+    IF ld_cs_request-h-trfunction <> 'K' AND ld_cs_request-h-trfunction <> 'W'.
+        me->write_telemetry( iv_message = |GET_TR_COMMIT_OBJECTS meets request type '{ ld_cs_request-h-trfunction }'| ).
+        rv_success = abap_false.
+        EXIT.
+    ENDIF.
+
+    " only support released one
+    IF ld_cs_request-h-trstatus <> 'R'.
+        me->write_telemetry( iv_message = |GET_TR_COMMIT_OBJECTS meets request status '{ ld_cs_request-h-trstatus }'| ).
         rv_success = abap_false.
         EXIT.
     ENDIF.
@@ -308,90 +393,115 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         DATA(lv_objname) = <fs_cs_request_object>-obj_name.
         DATA(lv_objtype) = <fs_cs_request_object>-object.
 
-        CLEAR: lv_objtype2, lv_devclass.
+        IF ld_cs_request-h-trfunction = 'W'.
 
-        IF lv_objtype = 'CINC'
-            OR lv_objtype = 'CLSD'
-            OR lv_objtype = 'CPUB'
-            OR lv_objtype = 'CPRT'
-            OR lv_objtype = 'CPRI'
-            OR lv_objtype = 'METH'.
+            " schema/PCR object in customizing request
 
-            " a test class, class definition, public/protected/private section and method will not be located in table tadir
-            " need to find the product class it belongs to and then find the package the product class belongs to
-
-            IF lv_objtype = 'CINC'.
-                " test class name to product class name
-                lv_programm = lv_objname.
-                CALL FUNCTION 'SEO_CLASS_GET_NAME_BY_INCLUDE'
+            lv_objname2 = lv_objname.
+            IF lv_objtype = 'PSCC'.
+                me->build_schema_content_active(
                     EXPORTING
-                        progname = lv_programm
+                        iv_schemaname = lv_objname2
                     IMPORTING
-                        clskey = lv_classkey.
-                lv_classname = lv_classkey.
+                        et_filecontent = lt_filecontent
+                         ).
+                SELECT SINGLE cdate FROM t52cc INTO @lv_cdate WHERE sname = @lv_objname.
+                SELECT SINGLE udate FROM t52cc INTO @lv_udate WHERE sname = @lv_objname.
+            ELSEIF lv_objtype = 'PCYC'.
+                me->build_pcr_content_active(
+                    EXPORTING
+                        iv_pcrname = lv_objname2
+                    IMPORTING
+                        et_filecontent = lt_filecontent
+                         ).
+                SELECT SINGLE cdate FROM t52ce INTO @lv_cdate WHERE cname = @lv_objname.
+                SELECT SINGLE udate FROM t52ce INTO @lv_udate WHERE cname = @lv_objname.
+                SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'CYCL' AND ponam = @lv_objname AND pattr = 'PCL'.
             ELSE.
-                IF lv_objtype = 'METH'.
-                    " class name <spaces> method name pattern
-                    CLEAR lt_objname_parts.
-                    SPLIT lv_objname AT ' ' INTO TABLE lt_objname_parts.
-                    lv_classname = lt_objname_parts[ 1 ].
-                ELSE.
-                    " for CLSD/CPUB/CPRT/CPRI case class name is provided
-                    lv_classname = lv_objname.
-                ENDIF.
-
-                IF line_exists( lt_classes[ table_line = lv_classname ] ).
-                    " this class has been processed, skip
-                    CONTINUE.
-                ELSE.
-                    " use the class name instead and ensure it's processed only one time
-                    APPEND lv_classname TO lt_classes.
-                    lv_objname = lv_classname.
-                    lv_objtype = 'CLAS'.
-                ENDIF.
+                " me->write_telemetry( iv_message = |unsupported type { lv_objtype } for object { lv_objname }| iv_kind = 'info' ).
+                CONTINUE.
             ENDIF.
 
-            " find out which package the class belongs to
-            SELECT SINGLE devclass INTO lv_devclass FROM tadir
-                WHERE object = 'CLAS' AND obj_name = lv_classname.
-
-        ELSEIF lv_objtype = 'FUNC'.
-
-            " function module case, find out function group and then the package function group belongs to
-            lv_funcname = lv_objname.
-            me->get_fugr( EXPORTING iv_objname = lv_funcname IMPORTING ev_fugrname = lv_fugr ).
-
-            " use cache for function group objects
-            IF line_exists( lt_fugrs[ fugr = lv_fugr ] ).
-                lv_devclass = lt_fugrs[ fugr = lv_fugr ]-devclass.
+            " schema/PCR has no reliable version upon releasing TR, have to use dates to determine add or update
+            IF lv_udate IS INITIAL OR lv_cdate = lv_udate.
+                lv_version_no = 1.
             ELSE.
-                SELECT SINGLE devclass FROM tadir INTO lv_devclass
-                    WHERE obj_name = lv_fugr AND object = 'FUGR'.
-                APPEND VALUE ts_fugr_devclass( fugr = lv_fugr devclass = lv_devclass ) TO lt_fugrs.
+                lv_version_no = 2.
             ENDIF.
 
-        ELSEIF lv_objtype = 'REPS'.
+            " stitch to string from source code lines
+            lv_filecontent = concat_lines_of( table = lt_filecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
 
-            " could be repair of an object
-            " need to search object type to replace 'REPS'
-            SELECT SINGLE object FROM tadir INTO lv_objtype
-                WHERE obj_name = lv_objname.
-            IF sy-subrc = 0.
+            TRANSLATE lv_objname TO UPPER CASE.
 
-                " found, use the right type of the object
-                " find out which package the ABAP object belongs to
+            APPEND VALUE ts_commit_object(
+                devclass = ''
+                objname = lv_objname
+                objtype = lv_objtype
+                objtype2 = lv_objtype
+                fugr = ''
+                progcls = lv_progcls
+                delflag = abap_false
+                verno = lv_version_no
+                filecontent = lv_filecontent
+                ) TO it_commit_objects.
+
+        ELSE.
+
+            " source code object in workbench request
+
+            CLEAR: lv_objtype2, lv_devclass.
+
+            IF lv_objtype = 'CINC'
+                OR lv_objtype = 'CLSD'
+                OR lv_objtype = 'CPUB'
+                OR lv_objtype = 'CPRT'
+                OR lv_objtype = 'CPRI'
+                OR lv_objtype = 'METH'.
+
+                " a test class, class definition, public/protected/private section and method will not be located in table tadir
+                " need to find the product class it belongs to and then find the package the product class belongs to
+
+                IF lv_objtype = 'CINC'.
+                    " test class name to product class name
+                    lv_programm = lv_objname.
+                    CALL FUNCTION 'SEO_CLASS_GET_NAME_BY_INCLUDE'
+                        EXPORTING
+                            progname = lv_programm
+                        IMPORTING
+                            clskey = lv_classkey.
+                    lv_classname = lv_classkey.
+                ELSE.
+                    IF lv_objtype = 'METH'.
+                        " class name <spaces> method name pattern
+                        CLEAR lt_objname_parts.
+                        SPLIT lv_objname AT ' ' INTO TABLE lt_objname_parts.
+                        lv_classname = lt_objname_parts[ 1 ].
+                    ELSE.
+                        " for CLSD/CPUB/CPRT/CPRI case class name is provided
+                        lv_classname = lv_objname.
+                    ENDIF.
+
+                    IF line_exists( lt_classes[ table_line = lv_classname ] ).
+                        " this class has been processed, skip
+                        CONTINUE.
+                    ELSE.
+                        " use the class name instead and ensure it's processed only one time
+                        APPEND lv_classname TO lt_classes.
+                        lv_objname = lv_classname.
+                        lv_objtype = 'CLAS'.
+                    ENDIF.
+                ENDIF.
+
+                " find out which package the class belongs to
                 SELECT SINGLE devclass INTO lv_devclass FROM tadir
-                    WHERE object = lv_objtype AND obj_name = lv_objname.
+                    WHERE object = 'CLAS' AND obj_name = lv_classname.
 
-            ELSE.
+            ELSEIF lv_objtype = 'FUNC'.
 
-                " function include case, extract function group name and then the package function group belongs to
-                " function include name as L + function group name + 3 characters
-                IF strlen( lv_objname ) < 4.
-                    lv_fugr = ''.
-                ELSE.
-                    lv_fugr = substring( val = lv_objname off = 1 len = strlen( lv_objname ) - 1 - 3 ).
-                ENDIF.
+                " function module case, find out function group and then the package function group belongs to
+                lv_funcname = lv_objname.
+                me->get_fugr( EXPORTING iv_objname = lv_funcname IMPORTING ev_fugrname = lv_fugr ).
 
                 " use cache for function group objects
                 IF line_exists( lt_fugrs[ fugr = lv_fugr ] ).
@@ -402,100 +512,158 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                     APPEND VALUE ts_fugr_devclass( fugr = lv_fugr devclass = lv_devclass ) TO lt_fugrs.
                 ENDIF.
 
+            ELSEIF lv_objtype = 'REPS'.
+
+                " could be repair of an object
+                " need to search object type to replace 'REPS'
+                SELECT SINGLE object FROM tadir INTO lv_objtype
+                    WHERE obj_name = lv_objname.
+                IF sy-subrc = 0.
+
+                    " found, use the right type of the object
+                    " find out which package the ABAP object belongs to
+                    SELECT SINGLE devclass INTO lv_devclass FROM tadir
+                        WHERE object = lv_objtype AND obj_name = lv_objname.
+
+                ELSE.
+
+                    " function include case, extract function group name and then the package function group belongs to
+                    " function include name as L + function group name + 3 characters
+                    IF strlen( lv_objname ) < 4.
+                        lv_fugr = ''.
+                    ELSE.
+                        lv_fugr = substring( val = lv_objname off = 1 len = strlen( lv_objname ) - 1 - 3 ).
+                    ENDIF.
+
+                    " use cache for function group objects
+                    IF line_exists( lt_fugrs[ fugr = lv_fugr ] ).
+                        lv_devclass = lt_fugrs[ fugr = lv_fugr ]-devclass.
+                    ELSE.
+                        SELECT SINGLE devclass FROM tadir INTO lv_devclass
+                            WHERE obj_name = lv_fugr AND object = 'FUGR'.
+                        APPEND VALUE ts_fugr_devclass( fugr = lv_fugr devclass = lv_devclass ) TO lt_fugrs.
+                    ENDIF.
+
+                ENDIF.
+
+            ELSEIF lv_objtype = 'PROG' OR lv_objtype = 'INTF' OR lv_objtype = 'ENHO'.
+
+                " program (include), interface, enhancement implementation case
+
+                " find out which package the ABAP object belongs to
+                SELECT SINGLE devclass INTO lv_devclass FROM tadir
+                    WHERE object = lv_objtype AND obj_name = lv_objname.
+
+            ELSEIF lv_objtype = 'TABD'.
+
+                " data table case
+
+                " find out which package the ABAP object belongs to
+                SELECT SINGLE devclass INTO lv_devclass FROM tadir
+                    WHERE object = 'TABL' AND obj_name = lv_objname.
+
+            ELSE.
+
+                " me->write_telemetry( iv_message = |unsupported type { lv_objtype } for object { lv_objname }| iv_kind = 'info' ).
+                CONTINUE.
+
             ENDIF.
 
-        ELSEIF lv_objtype = 'PROG' OR lv_objtype = 'INTF' OR lv_objtype = 'ENHO'.
+            lv_haspackage = abap_true.
+            IF sy-subrc <> 0.
+                " the ABAP object is not found from tadir, it may be a deleted object
+                lv_haspackage = abap_false.
+            ENDIF.
 
-            " program (include), interface, enhancement implementation case
+            " fetch versions no later than given TR date/time
+            CLEAR lt_objversions.
+            lv_success = me->get_versions_no(
+                EXPORTING
+                    iv_objname = lv_objname
+                    iv_objtype = lv_objtype
+                    iv_mode = c_latest_version
+                    iv_date = ld_cs_request-h-as4date
+                    iv_time = ld_cs_request-h-as4time
+                    iv_findtest = abap_false
+                IMPORTING
+                    ev_version_no = lv_version_no
+                CHANGING
+                    cht_objversions = lt_objversions
+                    ).
+            IF lv_success = abap_false AND lv_haspackage = abap_false.
+                " can't locate this object in table tadir and versions neither
+                " fail to find which package it belongs to and can't place it to ADO push payload
+                me->write_telemetry( iv_message = |deleted object { lv_objname } type { lv_objtype } can't be processed without package name available| ).
+                CONTINUE.
+            ENDIF.
 
-            " find out which package the ABAP object belongs to
-            SELECT SINGLE devclass INTO lv_devclass FROM tadir
-                WHERE object = lv_objtype AND obj_name = lv_objname.
+            " is the object in one of the packages specified?
+            CHECK line_exists( lt_packagenames[ table_line = lv_devclass ] ).
 
-        ELSE.
+            " is there any version found?
+            CHECK lv_version_no > 0.
 
-            me->write_telemetry( iv_message = |unsupported type { lv_objtype } for object { lv_objname }| iv_kind = 'info' ).
+            " fetch function group name in case of function module
+            IF lv_objtype = 'FUGR'.
+                lv_funcname = lv_objname.
+                lv_objtype2 = 'FUNC'.
+                me->get_fugr( EXPORTING iv_objname = lv_funcname IMPORTING ev_fugrname = lv_fugr ).
+            ENDIF.
+
+            " construct object content (and test class content won't be provided given not required to in fetching version above)
+            IF lv_objtype = 'TABL' OR lv_objtype = 'TABD'.
+                rv_success = me->build_data_table_content(
+                    EXPORTING
+                        iv_objname = lv_objname
+                        iv_version = lt_objversions[ 1 ]-objversionno
+                    IMPORTING
+                        ev_filecontent = lv_filecontent
+                        ).
+                CHECK rv_success = abap_true.
+            ELSE.
+                CLEAR lt_filecontent.
+                CLEAR lt_tclsfilecontent.
+                CLEAR lv_tclsfilecontent.
+                rv_success = me->build_code_content(
+                    EXPORTING
+                        iv_objname = lv_objname
+                        iv_objtype = lv_objtype
+                        it_objversions = lt_objversions
+                    IMPORTING
+                        et_filecontent = lt_filecontent
+                        ev_tclsname = lv_tclsname
+                        ev_tclstype = lv_tclstype
+                        et_tclsfilecontent = lt_tclsfilecontent
+                        ).
+                CHECK rv_success = abap_true.
+
+                " stitch to string from source code lines
+                lv_filecontent = concat_lines_of( table = lt_filecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
+            ENDIF.
+
+            IF lv_objtype = 'CINC'.
+                " following abapGit where class name is used for test class name instead of ====CCAU like one
+                lv_objname = lv_classname.
+            ENDIF.
+
+            CLEAR lv_subc.
+            SELECT SINGLE subc FROM reposrc INTO @lv_subc WHERE progname = @lv_objname.
+
+            TRANSLATE lv_objname TO UPPER CASE.
+
+            APPEND VALUE ts_commit_object(
+                devclass = lv_devclass
+                objname = lv_objname
+                objtype = lv_objtype
+                objtype2 = lv_objtype2
+                fugr = lv_fugr
+                subc = lv_subc
+                delflag = abap_false
+                verno = lv_version_no
+                filecontent = lv_filecontent
+                ) TO it_commit_objects.
 
         ENDIF.
-
-        lv_haspackage = abap_true.
-        IF sy-subrc <> 0.
-            " the ABAP object is not found from tadir, it may be a deleted object
-            lv_haspackage = abap_false.
-        ENDIF.
-
-        " fetch versions no later than given TR date/time
-        CLEAR lt_objversions.
-        lv_success = me->get_versions_no(
-            EXPORTING
-                iv_objname = lv_objname
-                iv_objtype = lv_objtype
-                iv_mode = c_latest_version
-                iv_date = ld_cs_request-h-as4date
-                iv_time = ld_cs_request-h-as4time
-                iv_findtest = abap_false
-            IMPORTING
-                ev_version_no = lv_version_no
-            CHANGING
-                cht_objversions = lt_objversions
-                ).
-        IF lv_success = abap_false AND lv_haspackage = abap_false.
-            " can't locate this object in table tadir and versions neither
-            " fail to find which package it belongs to and can't place it to ADO push payload
-            me->write_telemetry( iv_message = |deleted object { lv_objname } type { lv_objtype } can't be processed without package name available| ).
-            CONTINUE.
-        ENDIF.
-
-        " is the object in one of the packages specified?
-        CHECK line_exists( lt_packagenames[ table_line = lv_devclass ] ).
-
-        " is there any version found?
-        CHECK lv_version_no > 0.
-
-        " fetch function group name in case of function module
-        IF lv_objtype = 'FUGR'.
-            lv_funcname = lv_objname.
-            lv_objtype2 = 'FUNC'.
-            me->get_fugr( EXPORTING iv_objname = lv_funcname IMPORTING ev_fugrname = lv_fugr ).
-        ENDIF.
-
-        " construct object content (and test class content won't be provided given not required to in fetching version above)
-        CLEAR lt_filecontent.
-        CLEAR lt_tclsfilecontent.
-        CLEAR lv_tclsfilecontent.
-        rv_success = me->build_code_content(
-            EXPORTING
-                iv_objname = lv_objname
-                iv_objtype = lv_objtype
-                it_objversions = lt_objversions
-            IMPORTING
-                et_filecontent = lt_filecontent
-                ev_tclsname = lv_tclsname
-                ev_tclstype = lv_tclstype
-                et_tclsfilecontent = lt_tclsfilecontent
-                ).
-        CHECK rv_success = abap_true.
-
-        " stitch to string from source code lines
-        lv_filecontent = concat_lines_of( table = lt_filecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
-
-        IF lv_objtype = 'CINC'.
-            " following abapGit where class name is used for test class name instead of ====CCAU like one
-            lv_objname = lv_classname.
-        ENDIF.
-
-        TRANSLATE lv_objname TO UPPER CASE.
-
-        APPEND VALUE ts_commit_object(
-            devclass = lv_devclass
-            objname = lv_objname
-            objtype = lv_objtype
-            objtype2 = lv_objtype2
-            fugr = lv_fugr
-            delflag = abap_false
-            verno = lv_version_no
-            filecontent = lv_filecontent
-            ) TO it_commit_objects.
 
     ENDLOOP.
 
@@ -755,6 +923,220 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD BUILD_DATA_TABLE_CONTENT.
+
+    DATA:
+        DD02TV_TAB TYPE TABLE OF DD02TV,
+        DD02V_TAB TYPE TABLE OF DD02V,
+        DD03TV_TAB TYPE TABLE OF DD03TV,
+        DD03V_TAB TYPE TABLE OF DD03V,
+        DD05V_TAB TYPE TABLE OF DD05V,
+        DD08TV_TAB TYPE TABLE OF DD08TV,
+        DD08V_TAB TYPE TABLE OF DD08V,
+        DD35V_TAB TYPE TABLE OF DD35V,
+        DD36V_TAB TYPE TABLE OF DD36V.
+    DATA lv_objname TYPE VRSD-OBJNAME.
+    DATA ls_data_table_desc TYPE ty_data_table_desc.
+    DATA ls_data_table_field TYPE ty_data_table_field.
+
+    rv_success = abap_false.
+
+    lv_objname = iv_objname.
+    CALL FUNCTION 'SVRS_GET_VERSION_TABD_40'
+        EXPORTING
+            object_name = lv_objname
+            versno      = iv_version
+        TABLES
+            dd02v_tab   = dd02v_tab
+            dd03v_tab   = dd03v_tab
+            dd05v_tab   = dd05v_tab
+            dd08v_tab   = dd08v_tab
+            dd35v_tab   = dd35v_tab
+            dd36v_tab   = dd36v_tab
+            dd02tv_tab  = dd02tv_tab
+            dd03tv_tab  = dd03tv_tab
+            dd08tv_tab  = dd08tv_tab
+        EXCEPTIONS
+            no_version  = 01
+            OTHERS = 02.
+    IF sy-subrc <> 0.
+       me->write_telemetry( iv_message = |BUILD_DATA_TABLE_CONTENT fails in fetching data table content for { iv_objname } version { iv_version }| ).
+       EXIT.
+    ENDIF.
+
+    IF lines( dd02v_tab ) = 0.
+       me->write_telemetry( iv_message = |BUILD_DATA_TABLE_CONTENT fails in fetching data table header for { iv_objname }| ).
+       EXIT.
+    ENDIF.
+
+    ls_data_table_desc-dd02v-tabname = dd02v_tab[ 1 ]-tabname.
+    ls_data_table_desc-dd02v-ddlanguage = dd02v_tab[ 1 ]-ddlanguage.
+    ls_data_table_desc-dd02v-tabclass = dd02v_tab[ 1 ]-tabclass.
+    ls_data_table_desc-dd02v-clidep = dd02v_tab[ 1 ]-clidep.
+    ls_data_table_desc-dd02v-ddtext = dd02v_tab[ 1 ]-ddtext.
+    ls_data_table_desc-dd02v-mainflag = dd02v_tab[ 1 ]-mainflag.
+    ls_data_table_desc-dd02v-contflag = dd02v_tab[ 1 ]-contflag.
+    ls_data_table_desc-dd02v-shlpexi = dd02v_tab[ 1 ]-shlpexi.
+
+    LOOP AT dd03v_tab INTO DATA(wa_dd03v).
+        CLEAR ls_data_table_field.
+        ls_data_table_field-fieldname = wa_dd03v-fieldname.
+        ls_data_table_field-keyflag = wa_dd03v-keyflag.
+        ls_data_table_field-rollname = wa_dd03v-rollname.
+        ls_data_table_field-adminfield = wa_dd03v-adminfield.
+        ls_data_table_field-datatype = wa_dd03v-datatype.
+        ls_data_table_field-leng = wa_dd03v-leng.
+        ls_data_table_field-decimals = wa_dd03v-decimals.
+        ls_data_table_field-notnull = wa_dd03v-notnull.
+        ls_data_table_field-ddtext = wa_dd03v-ddtext.
+        REPLACE ALL OCCURRENCES OF ',' IN ls_data_table_field-ddtext WITH '`'.
+        ls_data_table_field-domname = wa_dd03v-domname.
+        ls_data_table_field-shlporigin = wa_dd03v-shlporigin.
+        ls_data_table_field-comptype = wa_dd03v-comptype.
+        APPEND ls_data_table_field TO ls_data_table_desc-dd03v.
+    ENDLOOP.
+
+    /UI2/CL_JSON=>serialize(
+        EXPORTING
+            !data = ls_data_table_desc
+            pretty_name = /ui2/cl_json=>pretty_mode-low_case
+        RECEIVING
+            r_json = ev_filecontent
+             ).
+
+    " beautify a bit with line breaks for code diff benefit
+    REPLACE ALL OCCURRENCES OF ',' IN ev_filecontent WITH |,{ CL_ABAP_CHAR_UTILITIES=>CR_LF }|.
+    REPLACE ALL OCCURRENCES OF '`' IN ls_data_table_field-ddtext WITH ','.
+
+    SPLIT ev_filecontent AT CL_ABAP_CHAR_UTILITIES=>CR_LF INTO TABLE et_filecontent.
+
+    rv_success = abap_true.
+
+  ENDMETHOD.
+
+  METHOD BUILD_SCHEMA_CONTENT_ACTIVE.
+
+    TYPES ts_comment TYPE t52c3.
+    DATA lv_ltext TYPE t52cc_t-ltext.
+    DATA ls_desc TYPE t52cc.
+    DATA lt_comments TYPE TABLE OF ts_comment.
+    DATA lv_line TYPE c LENGTH 79.
+    DATA lv_text TYPE string.
+
+    " fetch schema's meta data
+    SELECT SINGLE * FROM t52cc INTO @ls_desc WHERE sname = @iv_schemaname.
+
+    " fetch schema's description text
+    SELECT SINGLE ltext FROM t52cc_t INTO @lv_ltext WHERE sname = @iv_schemaname.
+
+    " meta data for this schema, don't want to bother to add an additional XML/JSON description file
+    APPEND |* Schema                : { iv_schemaname }| TO et_filecontent.
+    APPEND |* Description           : { lv_ltext }| TO et_filecontent.
+    APPEND |* Executable            : { ls_desc-execu }| TO et_filecontent.
+    APPEND |* Owner                 : { ls_desc-respu }| TO et_filecontent.
+    APPEND |* Creation Date         : { ls_desc-cdate }| TO et_filecontent.
+    APPEND |* Only Changed by Owner : { ls_desc-execu }| TO et_filecontent.
+    APPEND |* Version               : { ls_desc-uvers }| TO et_filecontent.
+    APPEND |* Last Changed By       : { ls_desc-uname }| TO et_filecontent.
+    APPEND |* Last Changed Date     : { ls_desc-udate }| TO et_filecontent.
+    APPEND |* Last Changed Time     : { ls_desc-utime }| TO et_filecontent.
+
+    " instruction table header
+    APPEND 'Line   Func. Par1  Par2  Par3  Par4  D Text' TO et_filecontent.
+
+    " fetch schema instructions' comments
+    SELECT * FROM t52c3 INTO TABLE @lt_comments
+        WHERE schem = @iv_schemaname AND spras = @c_en.
+
+    " fetch schema instructions
+    SELECT * FROM t52c1 INTO @DATA(wa_instr) WHERE schem = @iv_schemaname.
+        CLEAR lv_line.
+        lv_line = '000000'.
+        lv_text = |{ wa_instr-seqno }|.
+        DATA(len) = strlen( lv_text ).
+        DATA(off) = 5 - len.
+        lv_line+off(len) = lv_text.
+        lv_line+7 = wa_instr-funco.
+        lv_line+13 = wa_instr-parm1.
+        lv_line+19 = wa_instr-parm2.
+        lv_line+25 = wa_instr-parm3.
+        lv_line+31 = wa_instr-parm4.
+        lv_line+37 = wa_instr-delet.
+        lv_line+39 = lt_comments[ seqno = wa_instr-textid ]-scdes.
+        APPEND lv_line TO et_filecontent.
+    ENDSELECT.
+
+  ENDMETHOD.
+
+  METHOD BUILD_PCR_CONTENT_ACTIVE.
+
+    DATA lv_line TYPE c LENGTH 100.
+    DATA lv_index TYPE i.
+    DATA lv_text TYPE string.
+    DATA lv_t TYPE c.
+    DATA lv_ltext TYPE t52ce_t-ltext.
+    DATA ls_desc TYPE t52ce.
+    DATA lv_esg TYPE string.
+    DATA lv_wgt TYPE string.
+    DATA lv_cnt TYPE t52ba-pwert.
+    DATA lv_first TYPE c VALUE abap_true.
+
+    " fetch PCR's meta data
+    SELECT SINGLE * FROM t52ce INTO @ls_desc WHERE cname = @iv_pcrname.
+    SELECT SINGLE pwert FROM t52ba INTO @lv_cnt WHERE potyp = 'CYCL' AND ponam = @iv_pcrname AND pattr = 'CNT'.
+
+    " fetch PCR's description text
+    SELECT SINGLE ltext FROM t52ce_t INTO @lv_ltext WHERE cname = @iv_pcrname AND sprsl = @c_en.
+
+    " meta data for this PCR, don't want to bother to add an additional XML/JSON description file
+    APPEND |* PCR                   : { iv_pcrname }| TO et_filecontent.
+    APPEND |* Description           : { lv_ltext }| TO et_filecontent.
+    APPEND |* Country Grouping      : { lv_cnt }| TO et_filecontent.
+    APPEND |* Owner                 : { ls_desc-respu }| TO et_filecontent.
+    APPEND |* Creation Date         : { ls_desc-cdate }| TO et_filecontent.
+    APPEND |* Only Changed by Owner : { ls_desc-relea }| TO et_filecontent.
+    APPEND |* Last Changed By       : { ls_desc-uname }| TO et_filecontent.
+    APPEND |* Last Changed Date     : { ls_desc-udate }| TO et_filecontent.
+    APPEND |* Last Changed Time     : { ls_desc-utime }| TO et_filecontent.
+
+    " fetch PCR instructions
+    lv_index = 1.
+    SELECT * FROM t52c5 INTO @DATA(wa_instr) WHERE ccycl = @iv_pcrname.
+        IF lv_first = abap_true OR wa_instr-abart <> lv_esg OR wa_instr-lgart <> lv_wgt.
+            APPEND '' TO et_filecontent.
+            " show ES group and wage type
+            APPEND |* ES Group { wa_instr-abart }, Wage/Time Type { wa_instr-lgart }| TO et_filecontent.
+            " instruction table header
+            APPEND 'Line   Var.Key CL T Operation  Operation  Operation  Operation  Operation  Operation *' TO et_filecontent.
+            lv_first = abap_false.
+            lv_esg = wa_instr-abart.
+            lv_wgt = wa_instr-lgart.
+            lv_index = 1.
+        ENDIF.
+
+        CLEAR lv_line.
+        lv_line = '000000'.
+        lv_text = |{ lv_index }|.
+        DATA(len) = strlen( lv_text ).
+        DATA(off) = 5 - len.
+        lv_line+off(len) = lv_text.
+        lv_line+7 = wa_instr-vargt.
+        lv_line+15 = wa_instr-seqno.
+        lv_text = wa_instr-vinfo.
+        IF strlen( lv_text ) > 0.
+            lv_t = lv_text+0(1).
+            lv_text = lv_text+1.
+        ELSE.
+            lv_t = space.
+        ENDIF.
+        lv_line+18 = lv_t.
+        lv_line+20 = lv_text.
+        APPEND lv_line TO et_filecontent.
+        lv_index = lv_index + 1.
+    ENDSELECT.
+
+  ENDMETHOD.
+
   METHOD GET_VERSIONS_NO.
 
     DATA wa_ver TYPE VRSD.
@@ -943,6 +1325,34 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             wa_objversion-objversionno = lv_versno.
             wa_objversion-objname = iv_objname.
             wa_objversion-objtype = 'ENHO'.
+            APPEND wa_objversion TO cht_objversions.
+        ENDIF.
+    ELSEIF iv_objtype = 'TABL' OR iv_objtype = 'TABD'.
+        " data table case
+        CLEAR lt_vers.
+        rv_success = me->get_versions(
+            EXPORTING
+                iv_objname = iv_objname
+                iv_objtype = 'TABD'
+            CHANGING
+                it_vers = lt_vers
+                 ).
+        CHECK rv_success = abap_true.
+        rv_success = me->get_valued_version(
+            EXPORTING
+                iv_mode = iv_mode
+                iv_date = iv_date
+                iv_time = iv_time
+            IMPORTING
+                ev_versno = lv_versno
+                ev_verscnt = ev_version_no
+            CHANGING
+                cht_vers = lt_vers
+                 ).
+        IF rv_success = abap_true AND cht_objversions IS SUPPLIED.
+            wa_objversion-objversionno = lv_versno.
+            wa_objversion-objname = iv_objname.
+            wa_objversion-objtype = 'TABD'.
             APPEND wa_objversion TO cht_objversions.
         ENDIF.
     ELSE.

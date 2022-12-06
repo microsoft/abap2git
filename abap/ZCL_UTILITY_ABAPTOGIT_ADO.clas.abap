@@ -75,6 +75,7 @@ PUBLIC SECTION.
     " iv_branch - branch name to push the changes to
     " iv_comment - commit comment retrieved from get_tr_commit_objects
     " iv_rootfolder - the root folder in Git local clone for ABAP objects to add to, shared by all packages in SAP
+    " iv_folder_structure - 'flat' or 'eclipse'
     " it_commit_objects - table of ABAP objects to commit to Git, retrieved from get_tr_commit_objects
     " ev_synccnt - count of objects to sync
     METHODS push_tr_commit_objects
@@ -83,6 +84,7 @@ PUBLIC SECTION.
             iv_branch           TYPE string
             iv_comment          TYPE string
             iv_rootfolder       TYPE string DEFAULT '/SRC/'
+            iv_folder_structure TYPE string DEFAULT 'eclipse'
             it_commit_objects   TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_commit_object
         EXPORTING
             ev_synccnt          TYPE i
@@ -99,10 +101,19 @@ PUBLIC SECTION.
 
     " construct source code file name in Git repo from ABAP code object name
     " iv_commit_object - ABAP object to commit
+    " iv_local_folder - the file name is for local folder or not, if so folder structure may be built, otherwise just path name
+    " iv_base_folder - the base folder including package name for a file to save
+    " iv_folder_structure - 'flat' or 'eclipse'
+    " ev_file_folder - folder of the file to create (to skip folder creation)
     " rv_name - file name to present the ABAP object in Git repo
     CLASS-METHODS build_code_name
         IMPORTING
             iv_commit_object    TYPE ZCL_UTILITY_ABAPTOGIT_TR=>ts_commit_object
+            iv_local_folder     TYPE abap_bool
+            iv_base_folder      TYPE string OPTIONAL
+            iv_folder_structure TYPE string DEFAULT 'eclipse'
+        EXPORTING
+            ev_file_folder      TYPE string
         RETURNING VALUE(rv_name) TYPE string.
 
     " get sync status from the sync status file (by fetching item content from ADO REST API or local disk file)
@@ -142,9 +153,10 @@ PROTECTED SECTION.
 
 PRIVATE SECTION.
 
-    CONSTANTS: c_host               TYPE string VALUE 'https://dev.azure.com/',
-               c_head               TYPE string VALUE 'refs/heads/',
-               c_null_objectid_ref  TYPE string VALUE '0000000000000000000000000000000000000000'.
+    CONSTANTS: c_host                       TYPE string VALUE 'https://dev.azure.com/',
+               c_head                       TYPE string VALUE 'refs/heads/',
+               c_folder_structure_eclipse   TYPE string VALUE 'eclipse',
+               c_folder_structure_flat      TYPE string VALUE 'flat'.
 
     " credential for ADO REST APIs
     DATA username TYPE string.
@@ -308,7 +320,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             lv_changetype = 1.
         ENDIF.
 
-        DATA(lv_code_name) = build_code_name( lv_commit_object ).
+        DATA(lv_code_name) = build_code_name(
+            EXPORTING
+                iv_commit_object = lv_commit_object
+                iv_local_folder = abap_false
+                iv_folder_structure = iv_folder_structure
+                 ).
         DATA(lv_filepath) = |{ lv_rootfolder }{ lv_commit_object-devclass }/{ lv_code_name }|.
 
         " add the ABAP object change to the changes section of the payload
@@ -367,39 +384,165 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD BUILD_CODE_NAME.
+
+    DATA lv_folder TYPE RLGRAP-FILENAME.
+    Data lv_type TYPE string.
+
     IF iv_commit_object-objtype = 'FUNC' OR iv_commit_object-objtype2 = 'FUNC'.
-        " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
-        rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
+
+        IF iv_folder_structure = c_folder_structure_flat.
+            " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
+            rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_commit_object-objname CP |L{ iv_commit_object-fugr }*|.
+                " include case
+                IF iv_local_folder = abap_true.
+                    ev_file_folder = |{ iv_base_folder }\\Source Code Library\\Function Groups\\{ iv_commit_object-fugr }\\Includes|.
+                    rv_name = |Source Code Library\\Function Groups\\{ iv_commit_object-fugr }\\Includes\\{ iv_commit_object-objname }.abap|.
+                ELSE.
+                    rv_name = |Source Code Library/Function Groups/{ iv_commit_object-fugr }/Includes/{ iv_commit_object-objname }.abap|.
+                ENDIF.
+            ELSE.
+                " function module case
+                IF iv_local_folder = abap_true.
+                    ev_file_folder = |{ iv_base_folder }\\Source Code Library\\Function Groups\\{ iv_commit_object-fugr }\\Function Modules|.
+                    rv_name = |Source Code Library\\Function Groups\\{ iv_commit_object-fugr }\\Function Modules\\{ iv_commit_object-objname }.abap|.
+                ELSE.
+                    rv_name = |Source Code Library/Function Groups/{ iv_commit_object-fugr }/Function Modules/{ iv_commit_object-objname }.abap|.
+                ENDIF.
+            ENDIF.
+        ENDIF.
+
     ELSEIF iv_commit_object-objtype = 'REPS' AND iv_commit_object-fugr IS NOT INITIAL.
-        " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
-        rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
+
+        IF iv_folder_structure = c_folder_structure_flat.
+            " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
+            rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }\\Source Code Library\\Function Groups\\{ iv_commit_object-fugr }\\Includes|.
+                rv_name = |Source Code Library\\Function Groups\\{ iv_commit_object-fugr }\\Includes\\{ iv_commit_object-objname }.abap|.
+            ELSE.
+                rv_name = |Source Code Library/Function Groups/{ iv_commit_object-fugr }/Includes/{ iv_commit_object-objname }.abap|.
+            ENDIF.
+        ENDIF.
+
     ELSEIF iv_commit_object-objtype = 'CINC'.
-        " test class named as <class name>.clas.testclasses.abap, following abapGit
-        rv_name = |{ iv_commit_object-objname }.clas.testclasses.abap|.
+
+        IF iv_folder_structure = c_folder_structure_flat.
+            " test class named as <class name>.clas.testclasses.abap, following abapGit
+            rv_name = |{ iv_commit_object-objname }.clas.testclasses.abap|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }\\Source Code Library\\Classes|.
+                rv_name = |Source Code Library\\Classes\\{ iv_commit_object-objname }.clas.testclasses.abap|.
+            ELSE.
+                rv_name = |Source Code Library/Classes/{ iv_commit_object-objname }.clas.testclasses.abap|.
+            ENDIF.
+        ENDIF.
+
     ELSEIF iv_commit_object-objtype = 'ENHO'.
-        " enhancement implementation named as <enhancement name>.enho.abap, not following abapGit
-        rv_name = |{ iv_commit_object-objname }.enho.abap|.
+
+        IF iv_folder_structure = c_folder_structure_flat.
+            " enhancement implementation named as <enhancement name>.enho.abap, not following abapGit
+            rv_name = |{ iv_commit_object-objname }.enho.abap|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }\\Enhancements\\Enhancement Implementations|.
+                rv_name = |Enhancements\\Enhancement Implementations\\{ iv_commit_object-objname }.enho.abap|.
+            ELSE.
+                rv_name = |Enhancements/Enhancement Implementations/{ iv_commit_object-objname }.enho.abap|.
+            ENDIF.
+        ENDIF.
+
+    ELSEIF iv_commit_object-objtype = 'TABL' OR iv_commit_object-objtype = 'TABD'.
+
+        IF iv_folder_structure = c_folder_structure_flat.
+            " table object named as <table name>.tabl.json, not following abapGit
+            rv_name = |{ iv_commit_object-objname }.tabl.json|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }\\Dictionary\\Data Tables|.
+                rv_name = |Dictionary\\Data Tables\\{ iv_commit_object-objname }.tabl.json|.
+            ELSE.
+                rv_name = |Dictionary/Data Tables/{ iv_commit_object-objname }.tabl.json|.
+            ENDIF.
+        ENDIF.
+
+    ELSEIF iv_commit_object-objtype = 'PSCC'.
+
+        IF iv_folder_structure = c_folder_structure_flat.
+            " schema named as <schema name>.schm.txt
+            rv_name = |{ iv_commit_object-objname }.schm.txt|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }\\Schema|.
+                rv_name = |Schema\\{ iv_commit_object-objname }.schm.txt|.
+            ELSE.
+                rv_name = |Schema/{ iv_commit_object-objname }.schm.txt|.
+            ENDIF.
+        ENDIF.
+
+    ELSEIF iv_commit_object-objtype = 'PCYC'.
+
+        IF iv_folder_structure = c_folder_structure_flat.
+            " PCR named as <schema name>.pcr.txt
+            rv_name = |{ iv_commit_object-objname }.pcr.txt|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }\\PCR\\{ iv_commit_object-progcls }|.
+                rv_name = |PCR\\{ iv_commit_object-progcls }\\{ iv_commit_object-objname }.pcr.txt|.
+            ELSE.
+                rv_name = |PCR/{ iv_commit_object-progcls }/{ iv_commit_object-objname }.pcr.txt|.
+            ENDIF.
+        ENDIF.
+
     ELSE.
-        " others named as <object name>.<object type, PROG|CLAS|INTF|...>.abap, following abapGit
-        rv_name = |{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
+
+        IF iv_folder_structure = c_folder_structure_flat.
+            " others named as <object name>.<object type, PROG|CLAS|INTF|...>.abap, following abapGit
+            rv_name = |{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_commit_object-objtype = 'PROG'.
+                IF iv_commit_object-subc = '1'.
+                    lv_type = 'Programs'.
+                ELSE.
+                    lv_type = 'Includes'.
+                ENDIF.
+            ELSEIF iv_commit_object-objtype = 'CLAS'.
+                lv_type = 'Classes'.
+            ELSEIF iv_commit_object-objtype = 'INTF'.
+                lv_type = 'Interfaces'.
+            ELSEIF iv_commit_object-objtype = 'REPS'.
+                lv_type = 'Includes'.
+            ENDIF.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }\\Source Code Library\\{ lv_type }|.
+                rv_name = |Source Code Library\\{ lv_type }\\{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
+            ELSE.
+                rv_name = |Source Code Library/{ lv_type }/{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
+            ENDIF.
+        ENDIF.
+
     ENDIF.
+
   ENDMETHOD.
 
   METHOD GET_TRS.
 
     IF iv_fromtrid IS SUPPLIED.
-        " fetch TRs later than given released TR
+        " fetch TRs later than given released TR (workbench or customizing)
         DATA lv_dat TYPE d.
         DATA lv_tim TYPE t.
         SELECT SINGLE as4date INTO lv_dat FROM e070 WHERE trkorr = iv_fromtrid.
         SELECT SINGLE as4time INTO lv_tim FROM e070 WHERE trkorr = iv_fromtrid.
         SELECT trkorr INTO TABLE @et_trids FROM e070
-            WHERE trfunction = 'K' AND trstatus = 'R' AND ( as4date > @lv_dat OR ( as4date = @lv_dat AND as4time > @lv_tim ) )
+            WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R' AND ( as4date > @lv_dat OR ( as4date = @lv_dat AND as4time > @lv_tim ) )
             ORDER BY as4date ASCENDING, as4time ASCENDING.
     ELSE.
-        " fetch latest released TR
+        " fetch latest released TR (workbench or customizing)
         SELECT trkorr FROM e070 INTO TABLE @et_trids UP TO 1 ROWS
-            WHERE trfunction = 'K' AND trstatus = 'R'
+            WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R'
             ORDER BY as4date DESCENDING, as4time DESCENDING.
     ENDIF.
 
@@ -660,7 +803,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     ENDIF.
 
     IF lv_statuscode < 200 OR lv_statuscode >= 300.
-        me->write_telemetry( iv_message = |HTTP_GET_JSON HTTP GET for { lv_url } status code { lv_status }, response { lv_response }| ).
+        me->write_telemetry( iv_message = |HTTP_GET_JSON HTTP GET status code { lv_status } for { lv_url }, response { lv_response }| ).
         EXIT.
     ENDIF.
 
@@ -721,7 +864,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     ENDIF.
 
     IF lv_statuscode < 200 OR lv_statuscode >= 300.
-        me->write_telemetry( iv_message = |HTTP_POST_JSON HTTP POST for { lv_url } status code { lv_status }, response { lv_response }| ).
+        me->write_telemetry( iv_message = |HTTP_POST_JSON HTTP POST status code { lv_status } for { lv_url }, response { lv_response }| ).
         EXIT.
     ENDIF.
 

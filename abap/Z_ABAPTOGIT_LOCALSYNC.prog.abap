@@ -15,16 +15,29 @@ PARAMETERS:
     p_mode      TYPE string DEFAULT 'active' LOWER CASE OBLIGATORY,
     " TR ID to sync up to, if blank sync to default latest version 
     p_uttrid    TYPE string LOWER CASE.
+    " Folder structure
+    p_struct    TYPE string DEFAULT 'eclipse' LOWER CASE OBLIGATORY.
 
 START-OF-SELECTION.
 
 PERFORM f_download.
 
 FORM f_download.
+
     WRITE / |Sync mode { p_mode }|.
     WRITE / |Start download at { sy-uzeit }|.
+
     DATA lo_abaptogit TYPE REF TO ZCL_UTILITY_ABAPTOGIT.
     CREATE OBJECT lo_abaptogit.
+
+    " schema/PCR has no old versions kept thus up-to TR ID not applicable
+    lo_abaptogit->get_hr_schemapcrs(
+        EXPORTING
+            iv_folder = p_folder
+            iv_folder_structure = p_struct
+             ).
+
+    " source code and data table schema download
     DATA lv_packages TYPE string.
     lv_packages = p_pname.
     IF p_uttrid IS INITIAL.
@@ -33,6 +46,7 @@ FORM f_download.
                 iv_packages = lv_packages
                 iv_folder = p_folder
                 iv_mode = p_mode
+                iv_folder_structure = p_struct
                  ).
     ELSE.
         lo_abaptogit->get_packages_codes(
@@ -41,7 +55,10 @@ FORM f_download.
                 iv_folder = p_folder
                 iv_mode = p_mode
                 iv_uptotrid = p_uttrid
+                iv_folder_structure = p_struct
                  ).
     ENDIF.
+
     WRITE / |Finish download at { sy-uzeit }|.
+
 ENDFORM.

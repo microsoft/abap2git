@@ -3,7 +3,8 @@
 **abap2git** is a simplified sync tool written in ABAP code to one-way sync ABAP objects from an SAP system to Git repository with Azure DevOps REST API. Compared to existing solution abapGit (https://abapgit.org/), it brings following benefits:
 * Support multiple packages in a Git branch
 * Support multiple SAP systems in the same Git repo, each in their respective branches
-* Sync ABAP objects in a released workbench transport request (shortened as TR below) to specific Git branch
+* Support HR/Payroll schemas/personnel calculation rules (PCR)
+* Sync ABAP objects in a released workbench/customizing (for schema/PCR) transport request (shortened as TR below) to specific Git branch
 * The sync for the transport request only accesses the ABAP objects contained and not other ABAP objects, thus more efficient
 
 ## Features
@@ -12,7 +13,6 @@
 3. Support active version mode and latest version mode. In active version mode, for each ABAP object, active version, if any, otherwise latest version, will be downloaded; in latest version mode, for each ABAP object, only latest version will be downloaded or a released version no later than an optional released TR (to sync to that specific snapshot of the system), if not available the object will not be downloaded. Active version mode is best to download all current version of the ABAP objects for code inspection and analysis; latest version mode is best for continuous integration purpose.
 4. Sync a specific released TR to specific Git repo branch, provided the ABAP objects in that branch are downloaded in latest version mode above.
 5. Catchup: sync the Git repo branch to latest TR by generating commit for each TR between last sync-ed one and latest one, this helps you bring the git repo in sync if #4 is not run to catch some TRs.
-6. Upon sync-ing the released TR to Git repo branch, the branch could be added to CI branch in the ADO build pipeline to be triggered a run with ADO out-of-box feature.
 
 ## How To
 * Add the classes and reports in abap folder to the target SAP system.
@@ -21,6 +21,7 @@
 * Use git command/CLI/... to push the initial objects.
 * Register the ABAP Test Cockpit (ATC) BAdI class ZCL_IM_BADI_ABAPTOGIT_SYNC in abap folder to sync released TR to the Git branch with downloaded objects in latest version mode.
 * Run the report Z_ABAPTOGIT_CATCHUPSYNC to "catch up" the TRs as mentioned in feature #5.
+
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
