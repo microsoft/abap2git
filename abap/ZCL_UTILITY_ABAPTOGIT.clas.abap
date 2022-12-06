@@ -4,9 +4,10 @@
 " Multiple SAP systems in the landscape of a service line will share the same Git repo
 " in respective branches
 " Following ABAP objects are included in sync-ing:
-" Class, Function Module, Program, Include, Test Class, Interface, enhancement object (hook implementation, class).
+" Class, Function Module, Program, Include, Test Class, Interface,
+" Enhancement Object (hook implementation, class), Data Table, HR/payroll schema/PCR.
 " Following ABAP objects are not yet included in sync-ing:
-" Data table related objects, enhancement objects (others).
+" Data dictionary objects (others), enhancement objects (others) and other objects.
 " Deleted objects are not sync-ed since it's not found which package it was in.
 " Two modes are suggested in sync-ing to Git repo:
 " 1. Latest version mode, where latest version of an ABAP object, if any, is valued while
@@ -35,17 +36,28 @@ PUBLIC SECTION.
             io_objtelemetry     TYPE REF TO object OPTIONAL
             iv_methtelemetry    TYPE string OPTIONAL.
 
+    " fetch HR/payroll schema/PCR language code lines into files
+    " iv_folder - local folder name to save the files
+    " iv_folder_structure - 'flat' or 'eclipse'
+    METHODS get_hr_schemapcrs
+        IMPORTING
+            iv_folder   TYPE string
+            iv_folder_structure TYPE string DEFAULT 'eclipse'
+        RETURNING VALUE(rv_success) TYPE string.
+
     " fetch source code lines into files for ABAP code objects in given package
     " iv_package - package name
     " iv_folder - local folder name to save the files
     " iv_mode - 'latest' or 'active'
     " iv_uptotrid - optional TR ID to fetch the version of each object no later than
+    " iv_folder_structure - 'flat' or 'eclipse'
     METHODS get_package_codes
         IMPORTING
-            iv_package  TYPE devclass
-            iv_folder   TYPE string
-            iv_mode     TYPE string
-            iv_uptotrid TYPE string OPTIONAL
+            iv_package          TYPE devclass
+            iv_folder           TYPE string
+            iv_mode             TYPE string
+            iv_uptotrid         TYPE string OPTIONAL
+            iv_folder_structure TYPE string DEFAULT 'eclipse'
         RETURNING VALUE(rv_success) TYPE string.
 
     " fetch source code lines into files for ABAP code objects in given package list
@@ -53,23 +65,27 @@ PUBLIC SECTION.
     " iv_folder - local folder name to save the files
     " iv_mode - 'latest' or 'active'
     " iv_uptotrid - optional TR ID to fetch the version of each object no later than
+    " iv_folder_structure - 'flat' or 'eclipse'
     METHODS get_packages_codes
         IMPORTING
-            iv_packages TYPE string
-            iv_folder   TYPE string
-            iv_mode     TYPE string
-            iv_uptotrid TYPE string OPTIONAL
+            iv_packages         TYPE string
+            iv_folder           TYPE string
+            iv_mode             TYPE string
+            iv_uptotrid         TYPE string OPTIONAL
+            iv_folder_structure TYPE string DEFAULT 'eclipse'
         RETURNING VALUE(rv_success) TYPE string.
 
     " fetch source code lines into files for ABAP code objects in Y*/Z* packages
     " iv_folder - local folder name to save the files
     " iv_mode - 'latest' or 'active'
     " iv_uptotrid - optional TR ID to fetch the version of each object no later than
+    " iv_folder_structure - 'flat' or 'eclipse'
     METHODS get_customize_packages_codes
         IMPORTING
-            iv_folder   TYPE string
-            iv_mode     TYPE string DEFAULT 'latest'
-            iv_uptotrid TYPE string OPTIONAL
+            iv_folder           TYPE string
+            iv_mode             TYPE string DEFAULT 'latest'
+            iv_uptotrid         TYPE string OPTIONAL
+            iv_folder_structure TYPE string DEFAULT 'eclipse'
         RETURNING VALUE(rv_success) TYPE string.
 
     " setup configs for ADO operations
@@ -109,17 +125,21 @@ PUBLIC SECTION.
     " sync TRs that not yet sync-ed to Git since last TR marked in repo sync status file
     " iv_branch - branch name to push the changes to
     " iv_packagenames - package names to include in commit, separated by comma
-    " iv_rootfolder - the root folder in Git local clone for ABAP objects to add to, shared by all packages in SAP
+    " iv_rootfolder - the root folder in Git local clone for ABAP objects to add to, shared by all packages in SAP, case sensitive
+    " iv_folder_structure - 'flat' or 'eclipse'
     METHODS catchup_trs
         IMPORTING
-            iv_branch       TYPE string
-            iv_packagenames TYPE string
-            iv_rootfolder   TYPE string DEFAULT '/SRC/'
+            iv_branch           TYPE string
+            iv_packagenames     TYPE string
+            iv_rootfolder       TYPE string DEFAULT '/SRC/'
+            iv_folder_structure TYPE string DEFAULT 'eclipse'
         RETURNING VALUE(rv_success) TYPE string.
 
 PROTECTED SECTION.
 
 PRIVATE SECTION.
+
+    CONSTANTS c_schemapcr TYPE string VALUE '.schemapcr'.
 
     " code object used in downloading ABAP code object to local disk
     TYPES: BEGIN OF ts_code_object,
@@ -283,6 +303,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 iv_comment = lv_comment
                 iv_rootfolder = iv_rootfolder
                 it_commit_objects = lt_commit_objects
+                iv_folder_structure = iv_folder_structure
             IMPORTING
                 ev_synccnt = lv_synccnt
                  ).
@@ -301,6 +322,151 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     ev_branch = |{ iv_prefix }{ sy-sysid }|.
   ENDMETHOD.
 
+  METHOD GET_HR_SCHEMAPCRS.
+    DATA wacode TYPE ts_code_object.
+    DATA lt_schemas TYPE STANDARD TABLE OF ts_code_object.
+    DATA lt_pcrs TYPE STANDARD TABLE OF ts_code_object.
+    DATA lt_filecontent TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_abaptext.
+    DATA lv_basefolder TYPE string.
+    DATA lv_commit_object TYPE ZCL_UTILITY_ABAPTOGIT_TR=>ts_commit_object.
+    DATA lv_code_name TYPE string.
+    DATA lv_path TYPE string.
+    DATA lv_folder TYPE RLGRAP-FILENAME.
+    DATA lv_codefolder TYPE string.
+    DATA lv_filefolder TYPE string.
+    DATA lt_filefolders TYPE TABLE OF string WITH DEFAULT KEY.
+    DATA lv_success TYPE string.
+    DATA lv_schpcrname TYPE string.
+    DATA lv_progcls TYPE t52ba-pwert.
+
+    IF iv_folder NP '*\'.
+        lv_basefolder = iv_folder && '\'.
+    ELSE.
+        lv_basefolder = iv_folder.
+    ENDIF.
+
+    " root folder for a package like \src\.schemapcr\
+    lv_folder = |{ lv_basefolder }{ c_schemapcr }\\|.
+    lv_codefolder = lv_folder.
+    CALL FUNCTION 'GUI_CREATE_DIRECTORY'
+        EXPORTING
+            dirname = lv_folder
+        EXCEPTIONS
+            FAILED = 1.
+    IF sy-subrc <> 0.
+        me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS fails to create folder { lv_folder }| ).
+    ENDIF.
+
+    " download schemas
+    SELECT sname, 'PSCC', 'PSCC', ' ' INTO TABLE @lt_schemas FROM t52cc WHERE sname LIKE 'Z%' OR sname LIKE 'Y%'.
+
+    LOOP AT lt_schemas INTO wacode.
+
+        CLEAR lt_filecontent.
+
+        lv_schpcrname = wacode-obj_name.
+        me->oref_tr->build_schema_content_active(
+            EXPORTING
+                iv_schemaname = lv_schpcrname
+            IMPORTING
+                et_filecontent = lt_filecontent
+                 ).
+
+        lv_commit_object-objname = wacode-obj_name.
+        lv_commit_object-objtype = 'PSCC'.
+        lv_code_name = ZCL_UTILITY_ABAPTOGIT_ADO=>build_code_name(
+            EXPORTING
+                iv_commit_object = lv_commit_object
+                iv_local_folder = abap_true
+                iv_base_folder = lv_codefolder
+                iv_folder_structure = iv_folder_structure
+            IMPORTING
+                ev_file_folder = lv_filefolder
+                 ).
+        IF NOT line_exists( lt_filefolders[ table_line = lv_filefolder ] ).
+            APPEND lv_filefolder TO lt_filefolders.
+            lv_folder = lv_filefolder.
+            CALL FUNCTION 'GUI_CREATE_DIRECTORY'
+                EXPORTING
+                    dirname = lv_folder
+                EXCEPTIONS
+                    OTHERS = 1.
+        ENDIF.
+        lv_path = |{ lv_basefolder }{ c_schemapcr }\\{ lv_code_name }|.
+        CALL FUNCTION 'GUI_DOWNLOAD'
+            EXPORTING
+                filename = lv_path
+                filetype = 'ASC'
+                write_field_separator = 'X'
+            TABLES
+                data_tab = lt_filecontent
+            EXCEPTIONS
+                OTHERS = 1.
+        IF sy-subrc <> 0.
+            me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS fails to save local file { lv_path }| ).
+            rv_success = abap_false.
+        ENDIF.
+
+    ENDLOOP.
+
+    CLEAR: lt_schemas, lt_filecontent.
+
+    " download PCRs
+    SELECT cname, 'PCYC', 'PCYC', ' ' INTO TABLE @lt_pcrs FROM t52ce WHERE cname LIKE 'Z%' OR cname LIKE 'Y%'.
+
+    LOOP AT lt_pcrs INTO wacode.
+
+        CLEAR lt_filecontent.
+
+        lv_schpcrname = wacode-obj_name.
+        me->oref_tr->build_pcr_content_active(
+            EXPORTING
+                iv_pcrname = lv_schpcrname
+            IMPORTING
+                et_filecontent = lt_filecontent
+                 ).
+        SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'CYCL' AND ponam = @lv_schpcrname AND pattr = 'PCL'.
+
+        lv_commit_object-objname = wacode-obj_name.
+        lv_commit_object-objtype = 'PCYC'.
+        lv_commit_object-progcls = lv_progcls.
+        lv_code_name = ZCL_UTILITY_ABAPTOGIT_ADO=>build_code_name(
+            EXPORTING
+                iv_commit_object = lv_commit_object
+                iv_local_folder = abap_true
+                iv_base_folder = lv_codefolder
+                iv_folder_structure = iv_folder_structure
+            IMPORTING
+                ev_file_folder = lv_filefolder
+                 ).
+        IF NOT line_exists( lt_filefolders[ table_line = lv_filefolder ] ).
+            APPEND lv_filefolder TO lt_filefolders.
+            lv_folder = lv_filefolder.
+            CALL FUNCTION 'GUI_CREATE_DIRECTORY'
+                EXPORTING
+                    dirname = lv_folder
+                EXCEPTIONS
+                    OTHERS = 1.
+        ENDIF.
+        lv_path = |{ lv_basefolder }{ c_schemapcr }\\{ lv_code_name }|.
+        CALL FUNCTION 'GUI_DOWNLOAD'
+            EXPORTING
+                filename = lv_path
+                filetype = 'ASC'
+                write_field_separator = 'X'
+            TABLES
+                data_tab = lt_filecontent
+            EXCEPTIONS
+                OTHERS = 1.
+        IF sy-subrc <> 0.
+            me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS fails to save local file { lv_path }| ).
+            rv_success = abap_false.
+        ENDIF.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
   METHOD GET_PACKAGE_CODES.
 
     DATA wacode TYPE ts_code_object.
@@ -314,6 +480,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lv_fugrname TYPE versobjnam.
     DATA lv_basefolder TYPE string.
     DATA lt_filecontent TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_abaptext.
+    DATA lv_filecontent TYPE string.
     DATA lt_tclsfilecontent TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_abaptext.
     DATA lv_tclsname TYPE string.
     DATA lv_tclstype TYPE string.
@@ -321,11 +488,15 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lv_code_name TYPE string.
     DATA lv_path TYPE string.
     DATA lv_folder TYPE RLGRAP-FILENAME.
+    DATA lv_codefolder TYPE string.
     DATA lv_success TYPE string.
     DATA lv_objname3 TYPE e071-obj_name.
     DATA lv_version_no TYPE i.
     DATA lv_dat TYPE d.
     DATA lv_tim TYPE t.
+    DATA lv_subc TYPE reposrc-subc.
+    DATA lv_filefolder TYPE string.
+    DATA lt_filefolders TYPE TABLE OF string WITH DEFAULT KEY.
 
     IF iv_uptotrid IS SUPPLIED AND iv_mode <> ZCL_UTILITY_ABAPTOGIT_TR=>c_latest_version.
         me->write_telemetry( iv_message = |latest version required for up-to TR ID supplied| ).
@@ -341,6 +512,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
     " root folder for a package like \src\<branch name>\
     lv_folder = |{ lv_basefolder }{ iv_package }\\|.
+    lv_codefolder = lv_folder.
     CALL FUNCTION 'GUI_CREATE_DIRECTORY'
         EXPORTING
             dirname = lv_folder
@@ -350,8 +522,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to create folder { lv_folder }| ).
     ENDIF.
 
-    " collect FMs/includes in function groups into list of code objects to download
     SELECT obj_name, object, object, ' ' INTO TABLE @lt_codes FROM tadir WHERE devclass = @iv_package AND pgmid = 'R3TR'.
+
+    " collect FMs/includes in function groups into list of code objects to download
     LOOP AT lt_codes INTO wacode.
         lv_objtype = wacode-obj_type.
         IF lv_objtype = 'FUGR'.
@@ -373,7 +546,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     IF iv_uptotrid IS SUPPLIED.
         SELECT SINGLE as4date INTO lv_dat FROM e070 WHERE trkorr = iv_uptotrid AND trfunction = 'K' AND trstatus = 'R'.
         IF sy-subrc <> 0.
-            me->write_telemetry( iv_message = |{ iv_uptotrid } is not a released transport request| ).
+            me->write_telemetry( iv_message = |{ iv_uptotrid } is not a released workbench transport request| ).
             rv_success = abap_false.
             EXIT.
         ENDIF.
@@ -433,41 +606,79 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         CHECK lv_success = abap_true.
         CHECK lines( lt_objversions ) > 0.
 
-        " construct object content (and test class content if any) as source code lines
-        CLEAR lt_filecontent.
-        CLEAR lt_tclsfilecontent.
-        lv_success = me->oref_tr->build_code_content(
-            EXPORTING
-                iv_objname = lv_objname3
-                iv_objtype = lv_objtype
-                it_objversions = lt_objversions
-            IMPORTING
-                et_filecontent = lt_filecontent
-                ev_tclsname = lv_tclsname
-                ev_tclstype = lv_tclstype
-                et_tclsfilecontent = lt_tclsfilecontent
-                ).
-        IF lv_success <> abap_true.
-            me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch code content for { lv_objname3 } type { lv_objtype }| ).
-            rv_success = abap_false.
-            CONTINUE.
+        IF lv_objtype = 'TABL' OR lv_objtype = 'TABD'.
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->build_data_table_content(
+                EXPORTING
+                    iv_objname = lv_objname3
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                    ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+        ELSE.
+            " construct object content (and test class content if any) as source code lines
+            CLEAR lt_filecontent.
+            CLEAR lt_tclsfilecontent.
+            lv_success = me->oref_tr->build_code_content(
+                EXPORTING
+                    iv_objname = lv_objname3
+                    iv_objtype = lv_objtype
+                    it_objversions = lt_objversions
+                IMPORTING
+                    et_filecontent = lt_filecontent
+                    ev_tclsname = lv_tclsname
+                    ev_tclstype = lv_tclstype
+                    et_tclsfilecontent = lt_tclsfilecontent
+                    ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch code content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
         ENDIF.
+
+        CLEAR lv_subc.
+        SELECT SINGLE subc FROM reposrc INTO @lv_subc WHERE progname = @lv_objname3.
 
         " save the object content to local disk file
         lv_commit_object-objname = lv_objname3.
         lv_commit_object-objtype = lv_objtype.
         lv_commit_object-objtype2 = lv_objtype2.
         lv_commit_object-fugr = lv_fugrname.
-        lv_code_name = ZCL_UTILITY_ABAPTOGIT_ADO=>build_code_name( lv_commit_object ).
+        lv_commit_object-subc = lv_subc.
+        lv_code_name = ZCL_UTILITY_ABAPTOGIT_ADO=>build_code_name(
+            EXPORTING
+                iv_commit_object = lv_commit_object
+                iv_local_folder = abap_true
+                iv_base_folder = lv_codefolder
+                iv_folder_structure = iv_folder_structure
+            IMPORTING
+                ev_file_folder = lv_filefolder
+                 ).
+        IF NOT line_exists( lt_filefolders[ table_line = lv_filefolder ] ).
+            APPEND lv_filefolder TO lt_filefolders.
+            lv_folder = lv_filefolder.
+            CALL FUNCTION 'GUI_CREATE_DIRECTORY'
+                EXPORTING
+                    dirname = lv_folder
+                EXCEPTIONS
+                    OTHERS = 1.
+        ENDIF.
         lv_path = |{ lv_basefolder }{ iv_package }\\{ lv_code_name }|.
         CALL FUNCTION 'GUI_DOWNLOAD'
-              EXPORTING
+            EXPORTING
                 filename = lv_path
                 filetype = 'ASC'
                 write_field_separator = 'X'
-              TABLES
+            TABLES
                 data_tab = lt_filecontent
-              EXCEPTIONS
+            EXCEPTIONS
                 OTHERS = 1.
         IF sy-subrc <> 0.
             me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to save local file { lv_path }| ).
@@ -479,15 +690,34 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             " following abapGit where class name is used for test class name instead of ====CCAU like one
             lv_commit_object-objname = lv_objname3.
             lv_commit_object-objtype = lv_tclstype.
-            lv_code_name = ZCL_UTILITY_ABAPTOGIT_ADO=>build_code_name( lv_commit_object ).
+            lv_code_name = ZCL_UTILITY_ABAPTOGIT_ADO=>build_code_name(
+                EXPORTING
+                    iv_commit_object = lv_commit_object
+                    iv_local_folder = abap_true
+                    iv_base_folder = lv_codefolder
+                    iv_folder_structure = iv_folder_structure
+                IMPORTING
+                    ev_file_folder = lv_filefolder
+                     ).
+            IF NOT line_exists( lt_filefolders[ table_line = lv_filefolder ] ).
+                APPEND lv_filefolder TO lt_filefolders.
+                lv_folder = lv_filefolder.
+                CALL FUNCTION 'GUI_CREATE_DIRECTORY'
+                    EXPORTING
+                        dirname = lv_folder
+                    EXCEPTIONS
+                        OTHERS = 1.
+            ENDIF.
             lv_path = |{ lv_basefolder }{ iv_package }\\{ lv_code_name }|.
             CALL FUNCTION 'GUI_DOWNLOAD'
-                  EXPORTING
+                EXPORTING
                     filename = lv_path
                     filetype = 'ASC'
                     write_field_separator = 'X'
-                  TABLES
-                    data_tab = lt_tclsfilecontent.
+                TABLES
+                    data_tab = lt_tclsfilecontent
+                EXCEPTIONS
+                    OTHERS = 1.
             IF sy-subrc <> 0.
                 me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to save local file { lv_path }| ).
                 rv_success = abap_false.
@@ -529,6 +759,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                     iv_folder = lv_basefolder
                     iv_mode = iv_mode
                     iv_uptotrid = iv_uptotrid
+                    iv_folder_structure = iv_folder_structure
                      ).
         ELSE.
             lv_success = me->GET_PACKAGE_CODES(
@@ -536,6 +767,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                     iv_package = lv_package
                     iv_folder = lv_basefolder
                     iv_mode = iv_mode
+                    iv_folder_structure = iv_folder_structure
                      ).
         ENDIF.
         IF lv_success <> abap_true.
