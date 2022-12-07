@@ -8,7 +8,8 @@ PUBLIC SECTION.
 
     " latest and active version mode
     CONSTANTS: c_latest_version     TYPE string VALUE 'latest',
-               c_active_version     TYPE string VALUE 'active'.
+               c_active_version     TYPE string VALUE 'active',
+               c_schemapcr TYPE string VALUE '.schemapcr'.
 
     " version information of an ABAP object to fetch file content
     TYPES: BEGIN OF ts_version_no,
@@ -435,7 +436,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             TRANSLATE lv_objname TO UPPER CASE.
 
             APPEND VALUE ts_commit_object(
-                devclass = ''
+                devclass = c_schemapcr
                 objname = lv_objname
                 objtype = lv_objtype
                 objtype2 = lv_objtype
