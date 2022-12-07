@@ -139,8 +139,6 @@ PROTECTED SECTION.
 
 PRIVATE SECTION.
 
-    CONSTANTS c_schemapcr TYPE string VALUE '.schemapcr'.
-
     " code object used in downloading ABAP code object to local disk
     TYPES: BEGIN OF ts_code_object,
             obj_name    TYPE sobj_name,
@@ -346,7 +344,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     ENDIF.
 
     " root folder for a package like \src\.schemapcr\
-    lv_folder = |{ lv_basefolder }{ c_schemapcr }\\|.
+    lv_folder = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }\\|.
     lv_codefolder = lv_folder.
     CALL FUNCTION 'GUI_CREATE_DIRECTORY'
         EXPORTING
@@ -392,7 +390,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 EXCEPTIONS
                     OTHERS = 1.
         ENDIF.
-        lv_path = |{ lv_basefolder }{ c_schemapcr }\\{ lv_code_name }|.
+        lv_path = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }\\{ lv_code_name }|.
         CALL FUNCTION 'GUI_DOWNLOAD'
             EXPORTING
                 filename = lv_path
@@ -448,7 +446,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 EXCEPTIONS
                     OTHERS = 1.
         ENDIF.
-        lv_path = |{ lv_basefolder }{ c_schemapcr }\\{ lv_code_name }|.
+        lv_path = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }\\{ lv_code_name }|.
         CALL FUNCTION 'GUI_DOWNLOAD'
             EXPORTING
                 filename = lv_path
