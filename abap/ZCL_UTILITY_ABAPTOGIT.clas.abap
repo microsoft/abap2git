@@ -5,7 +5,8 @@
 " in respective branches
 " Following ABAP objects are included in sync-ing:
 " Class, Function Module, Program, Include, Test Class, Interface,
-" Enhancement Object (hook implementation, class), Data Table, HR/payroll schema/PCR.
+" Enhancement Object (hook implementation, class), Data Table,
+" HR/payroll schema/PCR, configuration changes.
 " Following ABAP objects are not yet included in sync-ing:
 " Data dictionary objects (others), enhancement objects (others) and other objects.
 " Deleted objects are not sync-ed since it's not found which package it was in.
@@ -90,10 +91,10 @@ PUBLIC SECTION.
 
     " setup configs for ADO operations
     " iv_username - VSO user name as email address
-    " iv_pat - VSO personal access token, could be generated from VSO portal per user
+    " iv_pat - VSO personal access token, could be generated from VSO portal per user with code change permission
     " iv_orgid - organization ID, like the name "org" in <org>.visualstudio.com
     " iv_repoid - Git repo ID
-    " iv_project - project like "OneITVSO"
+    " iv_project - project name in your VSO portal
     METHODS setup_ado
         IMPORTING
             iv_username         TYPE string

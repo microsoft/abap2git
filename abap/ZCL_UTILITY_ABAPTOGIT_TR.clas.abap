@@ -9,7 +9,8 @@ PUBLIC SECTION.
     " latest and active version mode
     CONSTANTS: c_latest_version     TYPE string VALUE 'latest',
                c_active_version     TYPE string VALUE 'active',
-               c_schemapcr TYPE string VALUE '.schemapcr'.
+               c_schemapcr          TYPE string VALUE '.schemapcr',
+               c_config             TYPE string VALUE '.config'.
 
     " version information of an ABAP object to fetch file content
     TYPES: BEGIN OF ts_version_no,
@@ -56,12 +57,14 @@ PUBLIC SECTION.
     " fetch ABAP objects from SAP to commit to Git for a TR
     " iv_trid - TR ID
     " iv_packagenames - package names to include in commit, separated by comma
+    " iv_maxrow - max rows for config table full snapshot
     " ev_comment - commit comment
     " it_commit_objects - table of ABAP objects to commit to Git including name, type, file content, add/update/delete status
     METHODS get_tr_commit_objects
         IMPORTING
             iv_trid             TYPE string
             iv_packagenames     TYPE string
+            iv_maxrow           TYPE i DEFAULT 10000
         EXPORTING
             ev_comment          TYPE string
         CHANGING
@@ -189,6 +192,16 @@ PRIVATE SECTION.
     DATA oref_telemetry TYPE REF TO object.
     DATA method_name_telemetry TYPE string.
 
+    " process config change case
+    METHODS build_config_change
+        IMPORTING
+            iv_cs_request       TYPE TRWBO_REQUEST
+            iv_objname          TYPE e071-obj_name
+            iv_objtype          TYPE e071-object
+            iv_maxrow           TYPE i DEFAULT 10000
+        CHANGING
+            it_commit_objects   TYPE tty_commit_object.
+
     " get function group name of an object in a function group
     METHODS get_fugr
         IMPORTING
@@ -217,6 +230,58 @@ PRIVATE SECTION.
         EXPORTING
             abaptext    TYPE tty_abaptext
         RETURNING VALUE(rv_success) TYPE string.
+
+    " fetch table schema
+    METHODS get_table_schema
+        IMPORTING
+            iv_objname  TYPE e071-obj_name
+            iv_version  TYPE versno
+            iv_escape   TYPE abap_bool DEFAULT abap_true
+        EXPORTING
+            ev_desc     TYPE ty_data_table_desc
+        RETURNING VALUE(rv_success) TYPE string.
+
+    " build config table delta-row lines
+    METHODS get_config_delta_lines
+        IMPORTING
+            iv_tabname  TYPE e071k-objname
+            iv_mtabname TYPE e071k-mastername
+            iv_request  TYPE TRWBO_REQUEST
+        EXPORTING
+            abaptext    TYPE tty_abaptext
+        RETURNING VALUE(rv_success) TYPE string.
+
+    " build config table all-row lines
+    METHODS get_config_table_lines
+        IMPORTING
+            iv_tabname  TYPE e071k-objname
+            iv_request  TYPE TRWBO_REQUEST
+            iv_maxrow   TYPE i DEFAULT 10000
+        EXPORTING
+            abaptext    TYPE tty_abaptext
+        RETURNING VALUE(rv_success) TYPE string.
+
+    " build config table row lines for header
+    METHODS get_config_lines_header
+        IMPORTING
+            iv_tabname  TYPE e071k-objname
+            iv_request  TYPE TRWBO_REQUEST
+        EXPORTING
+            ev_desc     TYPE ty_data_table_desc
+        CHANGING
+            abaptext    TYPE tty_abaptext
+        RETURNING VALUE(rv_success) TYPE string.
+
+    " extract packed number text from raw row line
+    METHODS build_packnumber_text
+        IMPORTING
+            iv_line TYPE string
+            iv_off  TYPE i
+            iv_leng TYPE i
+            iv_dec  TYPE i
+        EXPORTING
+            ev_text TYPE string
+            ev_leng TYPE i.
 
     " get class object version (for public/protected/private sections in definition and method implementations)
     METHODS get_class_versions_no
@@ -289,6 +354,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA ld_cs_request TYPE TRWBO_REQUEST.
     DATA lv_trkorr TYPE TRKORR.
     FIELD-SYMBOLS <fs_cs_request_object> LIKE LINE OF ld_cs_request-objects.
+    FIELD-SYMBOLS <fs_cs_request_key> LIKE LINE OF ld_cs_request-keys.
     DATA lt_objversions TYPE tty_version_no.
     DATA lt_filecontent TYPE tty_abaptext.
     DATA lt_tclsfilecontent TYPE tty_abaptext.
@@ -395,6 +461,21 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         DATA(lv_objtype) = <fs_cs_request_object>-object.
 
         IF ld_cs_request-h-trfunction = 'W'.
+
+            " config change object in customizing request
+
+            IF lv_objtype = 'CDAT'.
+                me->build_config_change(
+                    EXPORTING
+                        iv_cs_request = ld_cs_request
+                        iv_objname = <fs_cs_request_object>-obj_name
+                        iv_objtype = <fs_cs_request_object>-object
+                        iv_maxrow = iv_maxrow
+                    CHANGING
+                        it_commit_objects = it_commit_objects
+                         ).
+                CONTINUE.
+            ENDIF.
 
             " schema/PCR object in customizing request
 
@@ -670,6 +751,81 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD BUILD_CONFIG_CHANGE.
+
+    FIELD-SYMBOLS <fs_cs_request_key> LIKE LINE OF iv_cs_request-keys.
+    DATA lt_filecontent TYPE tty_abaptext.
+    DATA lv_objname TYPE string.
+    DATA lv_objtype TYPE string.
+    DATA lv_filecontent TYPE string.
+    DATA lv_success TYPE string.
+
+    LOOP AT iv_cs_request-keys ASSIGNING <fs_cs_request_key> WHERE mastertype = iv_objtype AND mastername = iv_objname.
+
+        lv_objtype = iv_objtype.
+        lv_objname = <fs_cs_request_key>-objname.
+        TRANSLATE lv_objname TO UPPER CASE.
+
+        CLEAR lt_filecontent.
+        lv_success = me->get_config_delta_lines(
+            EXPORTING
+                iv_tabname = <fs_cs_request_key>-objname
+                iv_mtabname = <fs_cs_request_key>-mastername
+                iv_request = iv_cs_request
+            IMPORTING
+                abaptext = lt_filecontent
+             ).
+        IF lv_success <> abap_true.
+            me->write_telemetry( iv_message = |fail to get config delta lines for { <fs_cs_request_key>-objname }| ).
+            CONTINUE.
+        ENDIF.
+
+        lv_filecontent = concat_lines_of( table = lt_filecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
+
+        APPEND VALUE ts_commit_object(
+            devclass = c_config
+            objname = lv_objname
+            objtype = lv_objtype
+            objtype2 = lv_objtype
+            fugr = ''
+            progcls = 'delta'
+            delflag = abap_false
+            verno = 1
+            filecontent = lv_filecontent
+            ) TO it_commit_objects.
+
+        CLEAR lt_filecontent.
+        lv_success = me->get_config_table_lines(
+            EXPORTING
+                iv_tabname = <fs_cs_request_key>-objname
+                iv_request = iv_cs_request
+                iv_maxrow = iv_maxrow
+            IMPORTING
+                abaptext = lt_filecontent
+             ).
+        IF lv_success <> abap_true.
+            me->write_telemetry( iv_message = |fail to get config full lines for { <fs_cs_request_key>-objname }| ).
+            CONTINUE.
+        ENDIF.
+
+        lv_filecontent = concat_lines_of( table = lt_filecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
+
+        APPEND VALUE ts_commit_object(
+            devclass = c_config
+            objname = lv_objname
+            objtype = lv_objtype
+            objtype2 = lv_objtype
+            fugr = ''
+            progcls = 'full'
+            delflag = abap_false
+            verno = 1
+            filecontent = lv_filecontent
+            ) TO it_commit_objects.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
   METHOD GET_FUGR.
 
     DATA lv_pname_filter TYPE string.
@@ -924,7 +1080,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
   ENDMETHOD.
 
-  METHOD BUILD_DATA_TABLE_CONTENT.
+  METHOD GET_TABLE_SCHEMA.
 
     DATA:
         DD02TV_TAB TYPE TABLE OF DD02TV,
@@ -936,9 +1092,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         DD08V_TAB TYPE TABLE OF DD08V,
         DD35V_TAB TYPE TABLE OF DD35V,
         DD36V_TAB TYPE TABLE OF DD36V.
+    DATA DD03P_TAB_A TYPE TABLE OF DD03P.
     DATA lv_objname TYPE VRSD-OBJNAME.
-    DATA ls_data_table_desc TYPE ty_data_table_desc.
+    DATA lv_tabname TYPE DD02L-TABNAME.
     DATA ls_data_table_field TYPE ty_data_table_field.
+    DATA lv_eddtext TYPE abap_bool VALUE abap_true.
 
     rv_success = abap_false.
 
@@ -961,23 +1119,42 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             no_version  = 01
             OTHERS = 02.
     IF sy-subrc <> 0.
-       me->write_telemetry( iv_message = |BUILD_DATA_TABLE_CONTENT fails in fetching data table content for { iv_objname } version { iv_version }| ).
-       EXIT.
+        me->write_telemetry( iv_message = |BUILD_DATA_TABLE_CONTENT fails in fetching data table header for { iv_objname } version { iv_version }| ).
+        EXIT.
     ENDIF.
 
     IF lines( dd02v_tab ) = 0.
-       me->write_telemetry( iv_message = |BUILD_DATA_TABLE_CONTENT fails in fetching data table header for { iv_objname }| ).
-       EXIT.
+        me->write_telemetry( iv_message = |BUILD_DATA_TABLE_CONTENT fails in fetching data table header for { iv_objname } with enough version| ).
+        EXIT.
     ENDIF.
 
-    ls_data_table_desc-dd02v-tabname = dd02v_tab[ 1 ]-tabname.
-    ls_data_table_desc-dd02v-ddlanguage = dd02v_tab[ 1 ]-ddlanguage.
-    ls_data_table_desc-dd02v-tabclass = dd02v_tab[ 1 ]-tabclass.
-    ls_data_table_desc-dd02v-clidep = dd02v_tab[ 1 ]-clidep.
-    ls_data_table_desc-dd02v-ddtext = dd02v_tab[ 1 ]-ddtext.
-    ls_data_table_desc-dd02v-mainflag = dd02v_tab[ 1 ]-mainflag.
-    ls_data_table_desc-dd02v-contflag = dd02v_tab[ 1 ]-contflag.
-    ls_data_table_desc-dd02v-shlpexi = dd02v_tab[ 1 ]-shlpexi.
+    " get English (default German) field description
+    lv_tabname = iv_objname.
+    CALL FUNCTION 'DD_TABL_GET'
+        EXPORTING
+            langu = 'E'
+            tabl_name = lv_tabname
+            withtext = abap_true
+        TABLES
+            DD03P_TAB_A = DD03P_TAB_A
+        EXCEPTIONS
+            ACCESS_FAILURE = 1.
+    IF sy-subrc <> 0.
+        lv_eddtext = abap_false.
+    ENDIF.
+
+    ev_desc-dd02v-tabname = dd02v_tab[ 1 ]-tabname.
+    ev_desc-dd02v-ddlanguage = dd02v_tab[ 1 ]-ddlanguage.
+    ev_desc-dd02v-tabclass = dd02v_tab[ 1 ]-tabclass.
+    ev_desc-dd02v-clidep = dd02v_tab[ 1 ]-clidep.
+    IF line_exists( dd02tv_tab[ ddlanguage = 'E' ] ).
+        ev_desc-dd02v-ddtext = dd02tv_tab[ ddlanguage = 'E' ]-ddtext.
+    ELSE.
+        ev_desc-dd02v-ddtext = dd02v_tab[ 1 ]-ddtext.
+    ENDIF.
+    ev_desc-dd02v-mainflag = dd02v_tab[ 1 ]-mainflag.
+    ev_desc-dd02v-contflag = dd02v_tab[ 1 ]-contflag.
+    ev_desc-dd02v-shlpexi = dd02v_tab[ 1 ]-shlpexi.
 
     LOOP AT dd03v_tab INTO DATA(wa_dd03v).
         CLEAR ls_data_table_field.
@@ -989,13 +1166,36 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         ls_data_table_field-leng = wa_dd03v-leng.
         ls_data_table_field-decimals = wa_dd03v-decimals.
         ls_data_table_field-notnull = wa_dd03v-notnull.
-        ls_data_table_field-ddtext = wa_dd03v-ddtext.
-        REPLACE ALL OCCURRENCES OF ',' IN ls_data_table_field-ddtext WITH '`'.
+        IF lv_eddtext = abap_true AND line_exists( DD03P_TAB_A[ fieldname = wa_dd03v-fieldname ] ).
+            ls_data_table_field-ddtext = DD03P_TAB_A[ fieldname = wa_dd03v-fieldname ]-ddtext.
+        ELSE.
+            ls_data_table_field-ddtext = wa_dd03v-ddtext.
+        ENDIF.
+        IF iv_escape = abap_true.
+            REPLACE ALL OCCURRENCES OF ',' IN ls_data_table_field-ddtext WITH '`'.
+        ENDIF.
         ls_data_table_field-domname = wa_dd03v-domname.
         ls_data_table_field-shlporigin = wa_dd03v-shlporigin.
         ls_data_table_field-comptype = wa_dd03v-comptype.
-        APPEND ls_data_table_field TO ls_data_table_desc-dd03v.
+        APPEND ls_data_table_field TO ev_desc-dd03v.
     ENDLOOP.
+
+    rv_success = abap_true.
+
+  ENDMETHOD.
+
+  METHOD BUILD_DATA_TABLE_CONTENT.
+
+    DATA ls_data_table_desc TYPE ty_data_table_desc.
+
+    rv_success = me->get_table_schema(
+        EXPORTING
+            iv_objname = iv_objname
+            iv_version = iv_version
+        IMPORTING
+            ev_desc = ls_data_table_desc
+             ).
+    CHECK rv_success = abap_true.
 
     /UI2/CL_JSON=>serialize(
         EXPORTING
@@ -1007,7 +1207,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     " beautify a bit with line breaks for code diff benefit
     REPLACE ALL OCCURRENCES OF ',' IN ev_filecontent WITH |,{ CL_ABAP_CHAR_UTILITIES=>CR_LF }|.
-    REPLACE ALL OCCURRENCES OF '`' IN ls_data_table_field-ddtext WITH ','.
+    LOOP AT ls_data_table_desc-dd03v ASSIGNING FIELD-SYMBOL(<fs>).
+        REPLACE ALL OCCURRENCES OF '`' IN <fs>-ddtext WITH ','.
+    ENDLOOP.
 
     SPLIT ev_filecontent AT CL_ABAP_CHAR_UTILITIES=>CR_LF INTO TABLE et_filecontent.
 
@@ -1135,6 +1337,343 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         APPEND lv_line TO et_filecontent.
         lv_index = lv_index + 1.
     ENDSELECT.
+
+  ENDMETHOD.
+
+  METHOD GET_CONFIG_LINES_HEADER.
+
+    DATA lv_objname TYPE  e071-obj_name.
+    DATA lv_version_no TYPE i.
+    DATA lt_objversions TYPE tty_version_no.
+    DATA wafield TYPE ty_data_table_field.
+    " 30 field name (max length) round up to 4 tabs x 8 plus a colon
+    DATA lv_field(33) TYPE c.
+    DATA lv_field_desc TYPE string.
+    DATA lv_strlen TYPE i.
+
+    rv_success = abap_false.
+
+    " fetch table version
+    lv_objname = iv_tabname.
+    IF lv_objname CP 'Z*' OR lv_objname CP 'Y*'.
+        rv_success = me->get_versions_no(
+            EXPORTING
+                iv_objname = lv_objname
+                iv_objtype = 'TABL'
+                iv_mode = c_latest_version
+                iv_date = iv_request-h-as4date
+                iv_time = iv_request-h-as4time
+                iv_findtest = abap_false
+            IMPORTING
+                ev_version_no = lv_version_no
+            CHANGING
+                cht_objversions = lt_objversions
+                ).
+    ELSE.
+        rv_success = me->get_versions_no(
+            EXPORTING
+                iv_objname = lv_objname
+                iv_objtype = 'TABL'
+                iv_mode = c_active_version
+                iv_findtest = abap_false
+            IMPORTING
+                ev_version_no = lv_version_no
+            CHANGING
+                cht_objversions = lt_objversions
+                ).
+    ENDIF.
+    CHECK rv_success = abap_true.
+    CHECK lv_version_no > 0.
+
+    " fetch table schema for column specs
+    rv_success = me->get_table_schema(
+        EXPORTING
+            iv_objname = lv_objname
+            iv_version = lt_objversions[ 1 ]-objversionno
+            iv_escape = abap_false
+        IMPORTING
+            ev_desc = ev_desc
+             ).
+    CHECK rv_success = abap_true.
+
+    " write file header for table and fields
+    APPEND |Table { iv_tabname }: { ev_desc-dd02v-ddtext }| TO abaptext.
+    APPEND 'Fields:' TO abaptext.
+    LOOP AT ev_desc-dd03v INTO wafield.
+        lv_strlen = strlen( wafield-fieldname ).
+        lv_field = '                                :'.
+        lv_field+0(lv_strlen) = wafield-fieldname.
+        lv_field_desc = wafield-ddtext.
+        APPEND |    { lv_field } { lv_field_desc }| TO abaptext.
+    ENDLOOP.
+    APPEND '' TO abaptext.
+
+  ENDMETHOD.
+
+  METHOD GET_CONFIG_DELTA_LINES.
+
+    TYPES: line(2000) TYPE c.
+    DATA lv_tabname TYPE dd02l-tabname.
+    DATA lt_entry_tab TYPE TABLE OF line.
+    DATA ls_data_table_desc TYPE ty_data_table_desc.
+    DATA wafield TYPE ty_data_table_field.
+    DATA lv_row TYPE i.
+    DATA lv_lineoffset TYPE i.
+    FIELD-SYMBOLS <fs_entry> TYPE line.
+    DATA lv_entry TYPE string.
+    DATA lv_field(33) TYPE c.
+    DATA lv_value TYPE string.
+    DATA lv_leng TYPE i.
+    DATA lv_strlen TYPE i.
+
+    rv_success = me->get_config_lines_header(
+        EXPORTING
+            iv_tabname = iv_tabname
+            iv_request = iv_request
+        IMPORTING
+            ev_desc = ls_data_table_desc
+        CHANGING
+            abaptext = abaptext
+         ).
+    CHECK rv_success = abap_true.
+
+    APPEND 'Rows:' TO abaptext.
+    APPEND '' TO abaptext.
+
+    " fetch config changes as table rows
+    lv_tabname = iv_tabname.
+    CALL FUNCTION 'SRTT_TABLE_GET_BY_KEYLIST'
+        EXPORTING
+            tabname = lv_tabname
+            mtype = 'CDAT'
+            mtabname = iv_mtabname
+        TABLES
+            e071k_tab = iv_request-keys
+            entry_tab = lt_entry_tab
+        EXCEPTIONS
+            OTHERS = 1.
+    IF sy-subrc <> 0.
+        me->write_telemetry( iv_message = |GET_CONFIG_DELTA_LINES fails in SRTT_TABLE_GET_BY_KEYLIST call with { iv_tabname }| ).
+        rv_success = abap_false.
+        EXIT.
+    ENDIF.
+
+    " extract field values from entry line text
+    lv_row = 1.
+    LOOP AT lt_entry_tab ASSIGNING <fs_entry>.
+        APPEND |Row { lv_row }| TO abaptext.
+        CLEAR lv_lineoffset.
+        LOOP AT ls_data_table_desc-dd03v INTO wafield.
+            lv_strlen = strlen( wafield-fieldname ).
+            lv_field = '                                :'.
+            lv_field+0(lv_strlen) = wafield-fieldname.
+            IF wafield-datatype = 'DEC'.
+                " packed number
+                lv_entry = <fs_entry>.
+                me->build_packnumber_text(
+                    EXPORTING
+                        iv_line = lv_entry
+                        iv_off = lv_lineoffset
+                        iv_leng = wafield-leng
+                        iv_Dec = wafield-decimals
+                    IMPORTING
+                        ev_text = lv_value
+                        ev_leng = lv_leng ).
+                lv_lineoffset = lv_lineoffset + lv_leng.
+            ELSE.
+                " other text like fields
+                lv_value = <fs_entry>+lv_lineoffset(wafield-leng).
+                lv_lineoffset = lv_lineoffset + wafield-leng.
+            ENDIF.
+            APPEND |    { lv_field } { lv_value }| TO abaptext.
+        ENDLOOP.
+        APPEND '' TO abaptext.
+        lv_row = lv_row + 1.
+    ENDLOOP.
+
+    rv_success = abap_true.
+
+  ENDMETHOD.
+
+  METHOD GET_CONFIG_TABLE_LINES.
+
+    DATA lv_tabname TYPE dd02l-tabname.
+    DATA lt_entry_tab TYPE TABLE OF line.
+    DATA ls_data_table_desc TYPE ty_data_table_desc.
+    DATA wafield TYPE ty_data_table_field.
+    DATA lv_row TYPE i.
+    DATA lv_field(33) TYPE c.
+    DATA lv_strlen TYPE i.
+    DATA lv_rowcount TYPE i.
+    DATA lv_fieldname TYPE string.
+    FIELD-SYMBOLS:
+        <fs_table> TYPE ANY TABLE,
+        <fs_struct> TYPE ANY,
+        <fs_field> TYPE ANY.
+    DATA: lo_typedesc    TYPE REF TO cl_abap_typedescr,
+          lo_tabtype     TYPE REF TO cl_abap_tabledescr,
+          lo_struct_type TYPE REF TO cl_abap_structdescr,
+          lr_data        TYPE REF TO data,
+          lt_comp_tab    TYPE cl_abap_structdescr=>component_table,
+          ls_comp_fld    TYPE cl_abap_structdescr=>component.
+
+    " prepare for dynamic SQL query for all rows
+    CALL METHOD cl_abap_typedescr=>describe_by_name
+        EXPORTING
+            p_name = iv_tabname
+        RECEIVING
+            p_descr_ref = lo_typedesc
+        EXCEPTIONS
+            TYPE_NOT_FOUND = 1.
+    IF sy-subrc <> 0.
+        me->write_telemetry( iv_message = |GET_CONFIG_TABLE_LINES fails to find type info of { iv_tabname }| ).
+        rv_success = abap_false.
+        EXIT.
+    ENDIF.
+
+    " if too many rows, choose not to dump it
+    lv_tabname = iv_tabname.
+    SELECT FROM (lv_tabname) FIELDS COUNT( * ) INTO @lv_rowcount.
+    IF lv_rowcount > iv_maxrow.
+        me->write_telemetry( iv_message = |GET_CONFIG_TABLE_LINES met table { iv_tabname } with { lv_rowcount } rows, more than { iv_maxrow }| ).
+        rv_success = abap_false.
+        EXIT.
+    ENDIF.
+
+    rv_success = me->get_config_lines_header(
+        EXPORTING
+            iv_tabname = iv_tabname
+            iv_request = iv_request
+        IMPORTING
+            ev_desc = ls_data_table_desc
+        CHANGING
+            abaptext = abaptext
+         ).
+    CHECK rv_success = abap_true.
+
+    lo_struct_type ?= lo_typedesc.
+    lt_comp_tab = lo_struct_type->get_components( ).
+    lo_struct_type = cl_abap_structdescr=>create( lt_comp_tab ).
+    lo_tabtype = cl_abap_tabledescr=>create( lo_struct_type ).
+    CREATE DATA lr_data TYPE HANDLE lo_tabtype.
+    ASSIGN lr_data->* TO <fs_table>.
+
+    APPEND 'Rows:' TO abaptext.
+    APPEND '' TO abaptext.
+
+    " dynamic query for given table name
+    SELECT * FROM (lv_tabname) INTO CORRESPONDING FIELDS OF TABLE <fs_table>.
+
+    lv_row = 1.
+    LOOP AT <fs_table> ASSIGNING FIELD-SYMBOL(<fs_row>).
+        APPEND |Row { lv_row }| TO abaptext.
+        APPEND '' TO abaptext.
+        LOOP AT ls_data_table_desc-dd03v INTO wafield.
+            lv_fieldname = wafield-fieldname.
+            ASSIGN COMPONENT lv_fieldname OF STRUCTURE <fs_row> TO <fs_field>.
+            lv_strlen = strlen( wafield-fieldname ).
+            lv_field = '                                :'.
+            lv_field+0(lv_strlen) = wafield-fieldname.
+            APPEND |    { lv_field } { <fs_field> }| TO abaptext.
+        ENDLOOP.
+        APPEND '' TO abaptext.
+        lv_row = lv_row + 1.
+    ENDLOOP.
+
+    rv_success = abap_true.
+
+  ENDMETHOD.
+
+  METHOD BUILD_PACKNUMBER_TEXT.
+
+    DATA lv_leng TYPE i.
+    DATA lv_index TYPE i.
+    DATA lv_char_val TYPE char1.
+    DATA lv_int_val TYPE i.
+    DATA lv_int_val_digit TYPE i.
+    DATA lv_mask1 TYPE x LENGTH 2 VALUE '00F0'.
+    DATA lv_mask2 TYPE x LENGTH 2 VALUE '000F'.
+    DATA lv_mask3 TYPE x LENGTH 2 VALUE 'F000'.
+    DATA lv_mask4 TYPE x LENGTH 2 VALUE '0F00'.
+    DATA lv_int_x TYPE x LENGTH 2.
+    DATA lv_digit TYPE c.
+    DATA lv_packnumber TYPE string.
+
+    lv_leng = iv_leng + 1.
+
+    " round up to multiply of 4
+    IF lv_leng MOD 4 <> 0.
+        lv_leng = ( ( lv_leng DIV 4 ) + 1 ) * 4.
+    ENDIF.
+
+    " bytes needed
+    lv_leng = lv_leng DIV 4.
+
+    lv_index = iv_off.
+    DO lv_leng TIMES.
+        " character to its integer value
+        lv_char_val = iv_line+lv_index(1).
+        CL_TREX_CHAR_UTILITY=>char_to_int(
+            EXPORTING
+                char_val = lv_char_val
+            RECEIVING
+                int_val = lv_int_val
+                 ).
+
+        " 1st digit
+        lv_int_x = lv_int_val.
+        lv_int_x = lv_int_x BIT-AND lv_mask1.
+        lv_int_x = lv_int_x DIV 16.
+        lv_int_val_digit = lv_int_x.
+        lv_digit = lv_int_val_digit.
+        lv_packnumber = lv_packnumber && lv_digit.
+
+        " 2nd digit
+        lv_int_x = lv_int_val.
+        lv_int_x = lv_int_x BIT-AND lv_mask2.
+        lv_int_val_digit = lv_int_x.
+        lv_digit = lv_int_val_digit.
+        lv_packnumber = lv_packnumber && lv_digit.
+
+        " 3rd digit
+        lv_int_x = lv_int_val.
+        lv_int_x = lv_int_x BIT-AND lv_mask3.
+        lv_int_x = lv_int_x DIV 4096.
+        lv_int_val_digit = lv_int_x.
+        lv_digit = lv_int_val_digit.
+        lv_packnumber = lv_packnumber && lv_digit.
+
+        IF sy-index = lv_leng.
+            " sign +/-
+            lv_int_x = lv_int_val.
+            lv_int_x = lv_int_x BIT-AND lv_mask4.
+            lv_int_x = lv_int_x DIV 256.
+            lv_int_val_digit = lv_int_x.
+            IF lv_int_val_digit <> 12.
+                lv_packnumber = '-' && lv_packnumber.
+            ENDIF.
+        ELSE.
+            " 4th digit
+            lv_int_x = lv_int_val.
+            lv_int_x = lv_int_x BIT-AND lv_mask4.
+            lv_int_x = lv_int_x DIV 256.
+            lv_int_val_digit = lv_int_x.
+            lv_digit = lv_int_val_digit.
+            lv_packnumber = lv_packnumber && lv_digit.
+        ENDIF.
+
+        lv_index = lv_index + 1.
+    ENDDO.
+
+    " apply decimal dot
+    IF iv_dec IS NOT INITIAL.
+        DATA(lv_strlen) = strlen( lv_packnumber ).
+        DATA(lv_left) = lv_strlen - iv_dec.
+        lv_packnumber = |{ lv_packnumber+0(lv_left) }.{ lv_packnumber+lv_left(iv_dec) }|.
+    ENDIF.
+
+    ev_text = lv_packnumber.
+    ev_leng = lv_leng.
 
   ENDMETHOD.
 
