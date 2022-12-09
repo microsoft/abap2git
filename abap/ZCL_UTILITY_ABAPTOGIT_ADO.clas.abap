@@ -53,10 +53,10 @@ PUBLIC SECTION.
 
     " constructor
     " iv_username - VSO user name as email address
-    " iv_pat - VSO personal access token, could be generated from VSO portal per user
+    " iv_pat - VSO personal access token, could be generated from VSO portal per user with code change permission
     " iv_orgid - organization ID, like the name "org" in <org>.visualstudio.com
     " iv_repoid - Git repo ID
-    " iv_project - project like "OneITVSO"
+    " iv_project - project name in your VSO portal
     " io_objtelemetry - class object for telemetry
     " iv_methtelemetry - method name for telemetry
     " for telemetry, the method will be invoked with parameters iv_message as string (for message content) and iv_kind as string (for category)
@@ -140,11 +140,13 @@ PUBLIC SECTION.
     " fetch item content by ADO REST API
     " iv_branch - branch name
     " iv_itempath - object path in Git repo
+    " iv_read - read file content
     " ev_content - object content retrieved
     METHODS get_item_ado
         IMPORTING
             iv_branch   TYPE string
             iv_itempath TYPE string
+            iv_read     TYPE abap_bool DEFAULT abap_true
         EXPORTING
             ev_content  TYPE string
         RETURNING VALUE(rv_success) TYPE string.
@@ -295,6 +297,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     DATA lv_syncfilecontent TYPE string.
     DATA lv_rootfolder TYPE string.
     DATA lv_synccnt TYPE i.
+    DATA lv_success TYPE string.
 
     lv_rootfolder = iv_rootfolder.
     TRANSLATE lv_rootfolder TO UPPER CASE.
@@ -327,6 +330,21 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
                 iv_folder_structure = iv_folder_structure
                  ).
         DATA(lv_filepath) = |{ lv_rootfolder }{ lv_commit_object-devclass }/{ lv_code_name }|.
+
+        " config change delta/full file may exist
+        IF lv_commit_object-objtype = 'CDAT'.
+            lv_success = me->get_item_ado(
+                EXPORTING
+                    iv_branch = iv_branch
+                    iv_itempath = lv_filepath
+                    iv_read = abap_false
+                     ).
+            IF lv_success = abap_true.
+                lv_changetype = 2.
+            ELSE.
+                lv_changetype = 1.
+            ENDIF.
+        ENDIF.
 
         " add the ABAP object change to the changes section of the payload
         me->build_push_json(
@@ -390,8 +408,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
     IF iv_commit_object-objtype = 'FUNC' OR iv_commit_object-objtype2 = 'FUNC'.
 
+        " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
         IF iv_folder_structure = c_folder_structure_flat.
-            " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
             rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_commit_object-objname CP |L{ iv_commit_object-fugr }*|.
@@ -415,8 +433,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
     ELSEIF iv_commit_object-objtype = 'REPS' AND iv_commit_object-fugr IS NOT INITIAL.
 
+        " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
         IF iv_folder_structure = c_folder_structure_flat.
-            " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
             rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
@@ -429,8 +447,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
     ELSEIF iv_commit_object-objtype = 'CINC'.
 
+        " test class named as <class name>.clas.testclasses.abap, following abapGit
         IF iv_folder_structure = c_folder_structure_flat.
-            " test class named as <class name>.clas.testclasses.abap, following abapGit
             rv_name = |{ iv_commit_object-objname }.clas.testclasses.abap|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
@@ -443,8 +461,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
     ELSEIF iv_commit_object-objtype = 'ENHO'.
 
+        " enhancement implementation named as <enhancement name>.enho.abap, not following abapGit
         IF iv_folder_structure = c_folder_structure_flat.
-            " enhancement implementation named as <enhancement name>.enho.abap, not following abapGit
             rv_name = |{ iv_commit_object-objname }.enho.abap|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
@@ -457,8 +475,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
     ELSEIF iv_commit_object-objtype = 'TABL' OR iv_commit_object-objtype = 'TABD'.
 
+        " table object named as <table name>.tabl.json, not following abapGit
         IF iv_folder_structure = c_folder_structure_flat.
-            " table object named as <table name>.tabl.json, not following abapGit
             rv_name = |{ iv_commit_object-objname }.tabl.json|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
@@ -471,8 +489,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
     ELSEIF iv_commit_object-objtype = 'PSCC'.
 
+        " schema named as <schema name>.schm.txt
         IF iv_folder_structure = c_folder_structure_flat.
-            " schema named as <schema name>.schm.txt
             rv_name = |{ iv_commit_object-objname }.schm.txt|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
@@ -485,8 +503,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
     ELSEIF iv_commit_object-objtype = 'PCYC'.
 
+        " PCR named as <schema name>.pcr.txt
         IF iv_folder_structure = c_folder_structure_flat.
-            " PCR named as <schema name>.pcr.txt
             rv_name = |{ iv_commit_object-objname }.pcr.txt|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
@@ -497,10 +515,24 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             ENDIF.
         ENDIF.
 
+    ELSEIF iv_commit_object-objtype = 'CDAT'.
+
+        " config change named as <table name>.<full|delta>.txt
+        IF iv_folder_structure = c_folder_structure_flat.
+            rv_name = |{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }\\{ iv_commit_object-devclass }\\{ iv_commit_object-progcls }|.
+                rv_name = |{ iv_commit_object-progcls }\\{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
+            ELSE.
+                rv_name = |{ iv_commit_object-progcls }/{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
+            ENDIF.
+        ENDIF.
+
     ELSE.
 
+        " others named as <object name>.<object type, PROG|CLAS|INTF|...>.abap, following abapGit
         IF iv_folder_structure = c_folder_structure_flat.
-            " others named as <object name>.<object type, PROG|CLAS|INTF|...>.abap, following abapGit
             rv_name = |{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_commit_object-objtype = 'PROG'.
@@ -627,7 +659,13 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
   METHOD GET_ITEM_ADO.
     " https://learn.microsoft.com/en-us/rest/api/azure/devops/git/items/get?view=azure-devops-rest-7.1&tabs=HTTP
     DATA lt_ret_data TYPE /ui5/cl_json_parser=>t_entry_map.
-    DATA(itemPath) = |{ me->orgid }/_apis/git/repositories/{ me->repoid }/items?path={ iv_itempath }&includeContent=true&versionDescriptor.version={ iv_branch }&versionDescriptor.versionType=branch&api-version=7.1-preview.1|.
+    DATA lv_read TYPE string.
+    IF iv_read = abap_true.
+        lv_read = 'true'.
+    ELSE.
+        lv_read = 'false'.
+    ENDIF.
+    DATA(itemPath) = |{ me->orgid }/_apis/git/repositories/{ me->repoid }/items?path={ iv_itempath }&includeContent={ lv_read }&versionDescriptor.version={ iv_branch }&versionDescriptor.versionType=branch&api-version=7.1-preview.1|.
     DATA lv_status TYPE i.
     ev_content = ''.
     me->HTTP_GET_JSON(
@@ -645,7 +683,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
         rv_success = abap_false.
         EXIT.
     ENDIF.
-    ev_content = lt_ret_data[ name = 'content' ]-value.
+    IF iv_read = abap_true.
+        ev_content = lt_ret_data[ name = 'content' ]-value.
+    ENDIF.
   ENDMETHOD.
 
   METHOD GET_COMMIT_ADO.
@@ -706,7 +746,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
              ).
     rv_success = abap_true.
     IF lv_status < 200 OR lv_status >= 300.
-        me->write_telemetry( iv_message = |PUSH_ADO fails to push to Git for branch { lv_branch } on top of commit { iv_commitid }| ).
+        me->write_telemetry( iv_message = |PUSH_ADO fails to push to Git { lv_status } for branch { lv_branch } on top of commit { iv_commitid }| ).
         rv_success = abap_false.
     ENDIF.
   ENDMETHOD.
