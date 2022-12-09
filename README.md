@@ -25,10 +25,10 @@
 
 ## FAQ
 ### Why is BAdI CTS_REQUEST_CHECK~CHECK_BEFORE_RELEASE not a good place to sync code to Azure DevOps?
-The BAdI class is called before releasing the transport request, the release process may fail afterwards due to many reasons, containing unreleased tasks, failed ATC rules, failed virtual forge checks, failed ATC unit tests, etc., then the request will end up with unreleased state, in this case the request is not supposed to sync to Git.
+The BAdI class is called before releasing the TR, the release process may fail afterwards due to many reasons, containing unreleased tasks, failed ATC rules, failed virtual forge checks, failed ATC unit tests, etc., then the request will end up with unreleased state, in this case the request is not supposed to sync to Git.
 
 ### Why use background job to call abap2git?
-Given the BAdI above with improper timing to sync to Git, scheduled background job with delay would be a solution to ensure the transport request release process is completed when the job starts.
+Given the BAdI above with improper timing to sync to Git, scheduled background job with delay would be a solution to ensure the TR release process is completed when the job starts.
 
 ### What if ABAP developer doesn't have the privilege to schedule background job in SAP?
 Contact security team to add a customized role with authorize objects required to schedule job and have ABAP developer apply for that role.
@@ -41,6 +41,9 @@ Check out next question for options and pros/cons.
 2. In BAdI class schedule background job but manage a time window (say 1 hour) that only one job is scheduled within the window. Also requires background job privilege. This reduces but doesn't eliminate the race condition given the events (TR is acutally released; abap2git checks if that TR is in released status) may race when the events happen at the time window boundary. Worst case a TR is not sync-ed when there's no further TR followed.
 3. Use SM36 to schedule recurring background job in specific frequency which fetches configurations/secrets (ADO PAT) and calls Z_ABAPTOGIT_CATCHUPSYNC program catching up released TRs since last sync. This is best but relies on your security/BASIS policy.
 4. Use Z_ABAPTOGIT_SCHEDULE_JOB program to schedule 28 days \* 24 jobs (1 per hour) at a time, requiring a developer with background job privilege to run it every 4 weeks. This doesn't require all ABAP developers with the privilege.
+
+### Why configuration changes look the same across multiple Git commits?
+Currently configuration changes in a specific data table are captured with current data rows in the table when the TR is sync-ed, thus if multiple TRs are sync-ed in catching up or changes are made before catching up, the configuration changes captured for the TRs will be the same and don't reflect the actual changes released by the TR. Future release of abap2git will attempt to fetch the actual changes from audit log or TR export file.
 
 ## Contributing
 
