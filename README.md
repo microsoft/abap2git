@@ -3,16 +3,17 @@
 **abap2git** is a simplified sync tool written in ABAP code to one-way sync ABAP objects from an SAP system to Git repository with Azure DevOps REST API. Compared to existing solution abapGit (https://abapgit.org/), it brings following benefits:
 * Support multiple packages in a Git branch
 * Support multiple SAP systems in the same Git repo, each in their respective branches
-* Support HR/Payroll schemas/personnel calculation rules (PCR)
-* Sync ABAP objects in a released workbench/customizing (for schema/PCR) transport request (shortened as TR below) to specific Git branch
-* The sync for the transport request only accesses the ABAP objects contained and not other ABAP objects, thus more efficient
+* Sync ABAP objects in a released workbench/customizing transport request (shortened as TR below) to specific Git branch
+* Support configuration changes in customizing transport request
+* Support HR/Payroll schemas/personnel calculation rules (PCR) in customizing transport request
+* The sync for the transport request only accesses the ABAP objects contained and not other unchanged ABAP objects, thus more efficient
 
 ## Features
 1. Download ABAP objects in specific package(s) of an SAP system to local folder, each package a folder.
 2. Download ABAP objects in all Y*/Z* customization packages to local folder.
 3. Support active version mode and latest version mode. In active version mode, for each ABAP object, active version, if any, otherwise latest version, will be downloaded; in latest version mode, for each ABAP object, only latest version will be downloaded or a released version no later than an optional released TR (to sync to that specific snapshot of the system), if not available the object will not be downloaded. Active version mode is best to download all current version of the ABAP objects for code inspection and analysis; latest version mode is best for continuous integration purpose.
 4. Sync a specific released TR to specific Git repo branch, provided the ABAP objects in that branch are downloaded in latest version mode above.
-5. Catchup: sync the Git repo branch to latest TR by generating commit for each TR between last sync-ed one and latest one, this helps you bring the git repo in sync if #4 is not run to catch some TRs.
+5. Catchup: sync the Git repo branch to latest TR by generating commit for each TR between last sync-ed one and latest one, this helps you bring the git repo in sync.
 
 ## How To
 * Add the classes and reports in abap folder to the target SAP system.
@@ -21,6 +22,25 @@
 * Use git command/CLI/... to push the initial objects.
 * Register the ABAP Test Cockpit (ATC) BAdI class ZCL_IM_BADI_ABAPTOGIT_SYNC in abap folder to sync released TR to the Git branch with downloaded objects in latest version mode.
 * Run the report Z_ABAPTOGIT_CATCHUPSYNC to "catch up" the TRs as mentioned in feature #5.
+
+## FAQ
+### Why is BAdI CTS_REQUEST_CHECK~CHECK_BEFORE_RELEASE not a good place to sync code to Azure DevOps?
+The BAdI class is called before releasing the transport request, the release process may fail afterwards due to many reasons, containing unreleased tasks, failed ATC rules, failed virtual forge checks, failed ATC unit tests, etc., then the request will end up with unreleased state, in this case the request is not supposed to sync to Git.
+
+### Why use background job to call abap2git?
+Given the BAdI above with improper timing to sync to Git, scheduled background job with delay would be a solution to ensure the transport request release process is completed when the job starts.
+
+### What if ABAP developer doesn't have the privilege to schedule background job in SAP?
+Contact security team to add a customized role with authorize objects required to schedule job and have ABAP developer apply for that role.
+
+### What if security cannot approve customized role for scheduling background job?
+Check out next question for options and pros/cons.
+
+### What are the options and pros/cons for background job solution?
+1. In BAdI class schedule background job to call abap2git spot sync method. The pros is the short turnaround time between TR release and Git sync, which ensures rapid continuous integration right after TR. The cons are privilege needed to schedule background job, and the race condition upon multiple TRs released in short time causing earlier TR got sync after later TR due to uncertain start time of their corresponding background jobs.
+2. In BAdI class schedule background job but manage a time window (say 1 hour) that only one job is scheduled within the window. Also requires background job privilege. This reduces but doesn't eliminate the race condition given the events (TR is acutally released; abap2git checks if that TR is in released status) may race when the events happen at the time window boundary. Worst case a TR is not sync-ed when there's no further TR followed.
+3. Use SM36 to schedule recurring background job in specific frequency which fetches configurations/secrets (ADO PAT) and calls Z_ABAPTOGIT_CATCHUPSYNC program catching up released TRs since last sync. This is best but relies on your security/BASIS policy.
+4. Use Z_ABAPTOGIT_SCHEDULE_JOB program to schedule 28 days \* 24 jobs (1 per hour) at a time, requiring a developer with background job privilege to run it every 4 weeks. This doesn't require all ABAP developers with the privilege.
 
 ## Contributing
 

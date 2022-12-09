@@ -40,11 +40,11 @@ CLASS zcl_im__badi_abaptogit_sync IMPLEMENTATION.
 
     DATA lv_package_names TYPE string.
 
-    " K - workbench request only trying sync when workbench request is released
-    DATA(lt_eligible_tr_types) = VALUE ty_list_string( ( `K` ) ).
+    " sync only when workbench/customizing request is to release
+    DATA(lt_eligible_tr_types) = VALUE ty_list_string( ( `K` ), ( `W` ) ).
 
     TRY.
-        " Check only workbench transport request type
+        " Check if workbench/customizing transport request type
         IF NOT line_exists( lt_eligible_tr_types[ table_line = type ] ).
           EXIT.
         ENDIF.
@@ -67,6 +67,22 @@ CLASS zcl_im__badi_abaptogit_sync IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD perform_spotsync_abaptogit.
+
+    " Be noted that this BAdI is called BEFORE a transport request is released,
+    " the request may not be able to release after the BAdI, due to many reasons
+    " say containing unreleased task, failed ATC unit tests, failed virtual forge checks, etc.
+    " It's unsafe to call abap2git for spot sync directly here,
+    " Suggested option is to start a background job after a while (say 15~60 seconds)
+    " to run program calling the abap2git class method with following code example,
+    " abap2git class method will check whether the transport request is released upon sync-ing.
+    " However due to background job delay, race condition may happen among multiple transport
+    " requests occur in a short time so that background job(s) for earlier transport requests
+    " may start later than the one(s) for later transport requests and consequently mess up
+    " the Git commit history, esp. when these transport requests contain changes to the same
+    " SAP objects. Additional queuing logic is required to sequentially line up these background
+    " jobs and it's not provided by abap2git. Check out FAQ.md for more details on options.
+
+    " TODO: wrap following code snippets into a background job
 
     " TODO: specify organization for ADO REST API
     DATA lv_orgid TYPE string.
@@ -105,6 +121,7 @@ CLASS zcl_im__badi_abaptogit_sync IMPLEMENTATION.
             iv_packagenames = iv_package_names
             iv_prefix = lv_baseprefix
              ).
+
   ENDMETHOD.
 
 ENDCLASS.
