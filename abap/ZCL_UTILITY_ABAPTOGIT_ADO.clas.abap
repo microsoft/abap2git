@@ -254,6 +254,7 @@ PRIVATE SECTION.
             iv_path         TYPE string
             iv_username     TYPE string
             iv_pat          TYPE string
+            iv_log          TYPE abap_bool DEFAULT abap_true
         EXPORTING
             ev_status       TYPE i
             et_entry_map    TYPE /ui5/cl_json_parser=>t_entry_map.
@@ -494,10 +495,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-objname }.schm.txt|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }\\Schema|.
-                rv_name = |Schema\\{ iv_commit_object-objname }.schm.txt|.
+                ev_file_folder = |{ iv_base_folder }\\Schema\\{ iv_commit_object-progcls }|.
+                rv_name = |Schema\\{ iv_commit_object-progcls }\\{ iv_commit_object-objname }.schm.txt|.
             ELSE.
-                rv_name = |Schema/{ iv_commit_object-objname }.schm.txt|.
+                rv_name = |Schema/{ iv_commit_object-progcls }/{ iv_commit_object-objname }.schm.txt|.
             ENDIF.
         ENDIF.
 
@@ -673,13 +674,16 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             iv_path = itemPath
             iv_username = me->username
             iv_pat = me->pat
+            iv_log = iv_read
         IMPORTING
             ev_status = lv_status
             et_entry_map = lt_ret_data
              ).
     rv_success = abap_true.
     IF lv_status < 200 OR lv_status >= 300.
-        me->write_telemetry( iv_message = |GET_ITEM_ADO fails to get item content from Git for branch { iv_branch }, path { iv_itempath }| ).
+        IF iv_read = abap_true.
+            me->write_telemetry( iv_message = |GET_ITEM_ADO fails to get item content from Git for branch { iv_branch }, path { iv_itempath }| ).
+        ENDIF.
         rv_success = abap_false.
         EXIT.
     ENDIF.
@@ -843,7 +847,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     ENDIF.
 
     IF lv_statuscode < 200 OR lv_statuscode >= 300.
-        me->write_telemetry( iv_message = |HTTP_GET_JSON HTTP GET status code { lv_status } for { lv_url }, response { lv_response }| ).
+        IF iv_log = abap_true.
+            me->write_telemetry( iv_message = |HTTP_GET_JSON HTTP GET status code { lv_status } for { lv_url }, response { lv_response }| ).
+        ENDIF.
         EXIT.
     ENDIF.
 
