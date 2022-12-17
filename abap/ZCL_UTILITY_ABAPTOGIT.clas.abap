@@ -370,9 +370,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             IMPORTING
                 et_filecontent = lt_filecontent
                  ).
+        SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'SCHE' AND ponam = @lv_schpcrname AND pattr = 'PCL'.
 
         lv_commit_object-objname = wacode-obj_name.
         lv_commit_object-objtype = 'PSCC'.
+        lv_commit_object-progcls = lv_progcls.
         lv_code_name = ZCL_UTILITY_ABAPTOGIT_ADO=>build_code_name(
             EXPORTING
                 iv_commit_object = lv_commit_object

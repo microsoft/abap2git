@@ -135,10 +135,12 @@ PUBLIC SECTION.
 
     " construct HR/payroll schema language code content
     " iv_schemaname - schema name
+    " iv_indented - indented for instruction part or not
     " et_filecontent - schema code content lines
     METHODS build_schema_content_active
         IMPORTING
             iv_schemaname   TYPE string
+            iv_indented     TYPE abap_bool DEFAULT abap_true
         EXPORTING
             et_filecontent  TYPE tty_abaptext.
 
@@ -256,6 +258,7 @@ PRIVATE SECTION.
         IMPORTING
             iv_tabname  TYPE e071k-objname
             iv_request  TYPE TRWBO_REQUEST
+            iv_tsv      TYPE abap_bool
             iv_maxrow   TYPE i DEFAULT 10000
         EXPORTING
             abaptext    TYPE tty_abaptext
@@ -266,6 +269,7 @@ PRIVATE SECTION.
         IMPORTING
             iv_tabname  TYPE e071k-objname
             iv_request  TYPE TRWBO_REQUEST
+            iv_tsv      TYPE abap_bool DEFAULT abap_false
         EXPORTING
             ev_desc     TYPE ty_data_table_desc
         CHANGING
@@ -479,6 +483,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
             " schema/PCR object in customizing request
 
+            CLEAR lt_filecontent.
             lv_objname2 = lv_objname.
             IF lv_objtype = 'PSCC'.
                 me->build_schema_content_active(
@@ -489,6 +494,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                          ).
                 SELECT SINGLE cdate FROM t52cc INTO @lv_cdate WHERE sname = @lv_objname.
                 SELECT SINGLE udate FROM t52cc INTO @lv_udate WHERE sname = @lv_objname.
+                SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'SCHE' AND ponam = @lv_objname AND pattr = 'PCL'.
             ELSEIF lv_objtype = 'PCYC'.
                 me->build_pcr_content_active(
                     EXPORTING
@@ -513,6 +519,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
             " stitch to string from source code lines
             lv_filecontent = concat_lines_of( table = lt_filecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
+
+            " align with GUI_DOWNLOAD which adds a blank line
+            lv_filecontent = lv_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
 
             TRANSLATE lv_objname TO UPPER CASE.
 
@@ -721,6 +730,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
                 " stitch to string from source code lines
                 lv_filecontent = concat_lines_of( table = lt_filecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
+
+                " align with GUI_DOWNLOAD which adds a blank line
+                lv_filecontent = lv_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
+
             ENDIF.
 
             IF lv_objtype = 'CINC'.
@@ -732,6 +745,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             SELECT SINGLE subc FROM reposrc INTO @lv_subc WHERE progname = @lv_objname.
 
             TRANSLATE lv_objname TO UPPER CASE.
+
+            IF line_exists( it_commit_objects[ devclass = lv_devclass objname = lv_objname objtype = lv_objtype objtype2 = lv_objtype2 fugr = lv_fugr ] ).
+                CONTINUE.
+            ENDIF.
 
             APPEND VALUE ts_commit_object(
                 devclass = lv_devclass
@@ -766,6 +783,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         lv_objname = <fs_cs_request_key>-objname.
         TRANSLATE lv_objname TO UPPER CASE.
 
+        IF line_exists( it_commit_objects[ objname = lv_objname objtype = lv_objtype ] ).
+            CONTINUE.
+        ENDIF.
+
         CLEAR lt_filecontent.
         lv_success = me->get_config_delta_lines(
             EXPORTING
@@ -782,6 +803,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
         lv_filecontent = concat_lines_of( table = lt_filecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
 
+        " align with GUI_DOWNLOAD which adds a blank line
+        lv_filecontent = lv_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
+
         APPEND VALUE ts_commit_object(
             devclass = c_config
             objname = lv_objname
@@ -794,11 +818,13 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             filecontent = lv_filecontent
             ) TO it_commit_objects.
 
+        " human readable version
         CLEAR lt_filecontent.
         lv_success = me->get_config_table_lines(
             EXPORTING
                 iv_tabname = <fs_cs_request_key>-objname
                 iv_request = iv_cs_request
+                iv_tsv = abap_false
                 iv_maxrow = iv_maxrow
             IMPORTING
                 abaptext = lt_filecontent
@@ -810,6 +836,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
         lv_filecontent = concat_lines_of( table = lt_filecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
 
+        " align with GUI_DOWNLOAD which adds a blank line
+        lv_filecontent = lv_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
+
         APPEND VALUE ts_commit_object(
             devclass = c_config
             objname = lv_objname
@@ -817,6 +846,39 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             objtype2 = lv_objtype
             fugr = ''
             progcls = 'full'
+            delflag = abap_false
+            verno = 1
+            filecontent = lv_filecontent
+            ) TO it_commit_objects.
+
+        " TSV version
+        CLEAR lt_filecontent.
+        lv_success = me->get_config_table_lines(
+            EXPORTING
+                iv_tabname = <fs_cs_request_key>-objname
+                iv_request = iv_cs_request
+                iv_tsv = abap_true
+                iv_maxrow = iv_maxrow
+            IMPORTING
+                abaptext = lt_filecontent
+             ).
+        IF lv_success <> abap_true.
+            me->write_telemetry( iv_message = |fail to get config full lines for { <fs_cs_request_key>-objname }| ).
+            CONTINUE.
+        ENDIF.
+
+        lv_filecontent = concat_lines_of( table = lt_filecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
+
+        " align with GUI_DOWNLOAD which adds a blank line
+        lv_filecontent = lv_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
+
+        APPEND VALUE ts_commit_object(
+            devclass = c_config
+            objname = lv_objname
+            objtype = lv_objtype
+            objtype2 = lv_objtype
+            fugr = ''
+            progcls = 'fulltsv'
             delflag = abap_false
             verno = 1
             filecontent = lv_filecontent
@@ -1213,6 +1275,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     SPLIT ev_filecontent AT CL_ABAP_CHAR_UTILITIES=>CR_LF INTO TABLE et_filecontent.
 
+    " align with GUI_DOWNLOAD which adds a blank line
+    ev_filecontent = ev_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
+
     rv_success = abap_true.
 
   ENDMETHOD.
@@ -1222,12 +1287,17 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     TYPES ts_comment TYPE t52c3.
     DATA lv_ltext TYPE t52cc_t-ltext.
     DATA ls_desc TYPE t52cc.
+    DATA lv_cnt TYPE t52ba-pwert.
     DATA lt_comments TYPE TABLE OF ts_comment.
-    DATA lv_line TYPE c LENGTH 79.
+    DATA lv_line TYPE c LENGTH 72.
     DATA lv_text TYPE string.
+    DATA lv_maxindent TYPE i.
+    DATA lv_indent TYPE i.
+    DATA lv_funco TYPE string.
 
     " fetch schema's meta data
     SELECT SINGLE * FROM t52cc INTO @ls_desc WHERE sname = @iv_schemaname.
+    SELECT SINGLE pwert FROM t52ba INTO @lv_cnt WHERE potyp = 'SCHE' AND ponam = @iv_schemaname AND pattr = 'CNT'.
 
     " fetch schema's description text
     SELECT SINGLE ltext FROM t52cc_t INTO @lv_ltext WHERE sname = @iv_schemaname.
@@ -1236,6 +1306,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     APPEND |* Schema                : { iv_schemaname }| TO et_filecontent.
     APPEND |* Description           : { lv_ltext }| TO et_filecontent.
     APPEND |* Executable            : { ls_desc-execu }| TO et_filecontent.
+    APPEND |* Country Grouping      : { lv_cnt }| TO et_filecontent.
     APPEND |* Owner                 : { ls_desc-respu }| TO et_filecontent.
     APPEND |* Creation Date         : { ls_desc-cdate }| TO et_filecontent.
     APPEND |* Only Changed by Owner : { ls_desc-execu }| TO et_filecontent.
@@ -1244,36 +1315,113 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     APPEND |* Last Changed Date     : { ls_desc-udate }| TO et_filecontent.
     APPEND |* Last Changed Time     : { ls_desc-utime }| TO et_filecontent.
 
-    " instruction table header
-    APPEND 'Line   Func. Par1  Par2  Par3  Par4  D Text' TO et_filecontent.
-
     " fetch schema instructions' comments
     SELECT * FROM t52c3 INTO TABLE @lt_comments
         WHERE schem = @iv_schemaname AND spras = @c_en.
 
-    " fetch schema instructions
-    SELECT * FROM t52c1 INTO @DATA(wa_instr) WHERE schem = @iv_schemaname.
-        CLEAR lv_line.
-        lv_line = '000000'.
-        lv_text = |{ wa_instr-seqno }|.
-        DATA(len) = strlen( lv_text ).
-        DATA(off) = 5 - len.
-        lv_line+off(len) = lv_text.
-        lv_line+7 = wa_instr-funco.
-        lv_line+13 = wa_instr-parm1.
-        lv_line+19 = wa_instr-parm2.
-        lv_line+25 = wa_instr-parm3.
-        lv_line+31 = wa_instr-parm4.
-        lv_line+37 = wa_instr-delet.
-        lv_line+39 = lt_comments[ seqno = wa_instr-textid ]-scdes.
-        APPEND lv_line TO et_filecontent.
-    ENDSELECT.
+    IF iv_indented = abap_true.
+
+        " calculate max indents
+        lv_indent = 0.
+        lv_maxindent = 0.
+        SELECT * FROM t52c1 INTO @DATA(wa_instr1) WHERE schem = @iv_schemaname.
+            IF wa_instr1-delet = '*'.
+                CONTINUE.
+            ENDIF.
+            CASE wa_instr1-funco.
+                WHEN 'IF' OR 'BINI' OR 'BEND' OR 'BDAY' OR 'LPBEG'.
+                    lv_indent = lv_indent + 2.
+                    IF lv_maxindent < lv_indent.
+                        lv_maxindent = lv_indent.
+                    ENDIF.
+                WHEN 'ENDIF' OR 'EINI' OR 'EEND' OR 'EDAY' OR 'LPEND'.
+                    lv_indent = lv_indent - 2.
+            ENDCASE.
+        ENDSELECT.
+
+        " instruction table header
+        DATA lv_header TYPE string VALUE 'Par1  Par2  Par3  Par4  D Text'.
+        DO lv_maxindent TIMES.
+            lv_header = ` ` && lv_header.
+        ENDDO.
+        lv_header = `Func. ` && lv_header.
+        APPEND lv_header TO et_filecontent.
+
+        lv_indent = 0.
+
+        " fetch schema instructions
+        SELECT * FROM t52c1 INTO @DATA(wa_instr2) WHERE schem = @iv_schemaname.
+            CLEAR lv_line.
+            lv_line+0 = wa_instr2-parm1.
+            lv_line+6 = wa_instr2-parm2.
+            lv_line+12 = wa_instr2-parm3.
+            lv_line+18 = wa_instr2-parm4.
+            lv_line+24 = wa_instr2-delet.
+            lv_line+26 = lt_comments[ seqno = wa_instr2-textid ]-scdes.
+            CLEAR lv_funco.
+            lv_funco = wa_instr2-funco.
+            CASE wa_instr2-funco.
+                WHEN 'IF' OR 'BINI' OR 'BEND' OR 'BDAY' OR 'LPBEG'.
+                    DO lv_indent TIMES.
+                        lv_funco = ` ` && lv_funco.
+                    ENDDO.
+                    IF wa_instr2-delet <> '*'.
+                        lv_indent = lv_indent + 2.
+                    ENDIF.
+                WHEN 'ELSE'.
+                    IF wa_instr2-delet <> '*'.
+                        lv_indent = lv_indent - 2.
+                    ENDIF.
+                    DO lv_indent TIMES.
+                        lv_funco = ` ` && lv_funco.
+                    ENDDO.
+                    IF wa_instr2-delet <> '*'.
+                        lv_indent = lv_indent + 2.
+                    ENDIF.
+                WHEN 'ENDIF' OR 'EINI' OR 'EEND' OR 'EDAY' OR 'LPEND'.
+                    IF wa_instr2-delet <> '*'.
+                        lv_indent = lv_indent - 2.
+                    ENDIF.
+                    DO lv_indent TIMES.
+                        lv_funco = ` ` && lv_funco.
+                    ENDDO.
+                WHEN OTHERS.
+                    DO lv_indent TIMES.
+                        lv_funco = ` ` && lv_funco.
+                    ENDDO.
+            ENDCASE.
+            DATA(lv_length) = strlen( lv_funco ).
+            DO lv_maxindent + 6 - lv_length TIMES.
+                lv_funco = lv_funco && ` `.
+            ENDDO.
+            APPEND |{ lv_funco }{ lv_line }| TO et_filecontent.
+        ENDSELECT.
+
+    ELSE.
+
+        " instruction table header
+        APPEND 'Func. Par1  Par2  Par3  Par4  D Text' TO et_filecontent.
+
+        " fetch schema instructions
+        SELECT * FROM t52c1 INTO @DATA(wa_instr3) WHERE schem = @iv_schemaname.
+            CLEAR lv_line.
+            lv_line+0 = wa_instr3-funco.
+            lv_line+6 = wa_instr3-parm1.
+            lv_line+12 = wa_instr3-parm2.
+            lv_line+18 = wa_instr3-parm3.
+            lv_line+24 = wa_instr3-parm4.
+            lv_line+30 = wa_instr3-delet.
+            lv_line+32 = lt_comments[ seqno = wa_instr3-textid ]-scdes.
+            APPEND lv_line TO et_filecontent.
+        ENDSELECT.
+
+    ENDIF.
 
   ENDMETHOD.
 
   METHOD BUILD_PCR_CONTENT_ACTIVE.
 
-    DATA lv_line TYPE c LENGTH 100.
+    DATA lv_line TYPE c LENGTH 91.
     DATA lv_index TYPE i.
     DATA lv_text TYPE string.
     DATA lv_t TYPE c.
@@ -1310,7 +1458,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             " show ES group and wage type
             APPEND |* ES Group { wa_instr-abart }, Wage/Time Type { wa_instr-lgart }| TO et_filecontent.
             " instruction table header
-            APPEND 'Line   Var.Key CL T Operation  Operation  Operation  Operation  Operation  Operation *' TO et_filecontent.
+            APPEND 'Var.Key CL T Operation  Operation  Operation  Operation  Operation  Operation *' TO et_filecontent.
             lv_first = abap_false.
             lv_esg = wa_instr-abart.
             lv_wgt = wa_instr-lgart.
@@ -1318,13 +1466,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         ENDIF.
 
         CLEAR lv_line.
-        lv_line = '000000'.
-        lv_text = |{ lv_index }|.
-        DATA(len) = strlen( lv_text ).
-        DATA(off) = 5 - len.
-        lv_line+off(len) = lv_text.
-        lv_line+7 = wa_instr-vargt.
-        lv_line+15 = wa_instr-seqno.
+        lv_line+0 = wa_instr-vargt.
+        lv_line+8 = wa_instr-seqno.
         lv_text = wa_instr-vinfo.
         IF strlen( lv_text ) > 0.
             lv_t = lv_text+0(1).
@@ -1332,8 +1475,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         ELSE.
             lv_t = space.
         ENDIF.
-        lv_line+18 = lv_t.
-        lv_line+20 = lv_text.
+        lv_line+11 = lv_t.
+        lv_line+13 = lv_text.
         APPEND lv_line TO et_filecontent.
         lv_index = lv_index + 1.
     ENDSELECT.
@@ -1350,6 +1493,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lv_field(33) TYPE c.
     DATA lv_field_desc TYPE string.
     DATA lv_strlen TYPE i.
+    DATA lv_header TYPE string.
 
     rv_success = abap_false.
 
@@ -1398,15 +1542,24 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     " write file header for table and fields
     APPEND |Table { iv_tabname }: { ev_desc-dd02v-ddtext }| TO abaptext.
-    APPEND 'Fields:' TO abaptext.
-    LOOP AT ev_desc-dd03v INTO wafield.
-        lv_strlen = strlen( wafield-fieldname ).
-        lv_field = '                                :'.
-        lv_field+0(lv_strlen) = wafield-fieldname.
-        lv_field_desc = wafield-ddtext.
-        APPEND |    { lv_field } { lv_field_desc }| TO abaptext.
-    ENDLOOP.
-    APPEND '' TO abaptext.
+    APPEND |Changed in TR { iv_request-h-trkorr } at { iv_request-h-as4date } { iv_request-h-as4time }| TO abaptext.
+
+    IF iv_tsv = abap_true.
+        LOOP AT ev_desc-dd03v INTO wafield.
+            lv_header = lv_header && wafield-fieldname && cl_abap_char_utilities=>horizontal_tab.
+        ENDLOOP.
+        APPEND lv_header TO abaptext.
+    ELSE.
+        APPEND 'Fields:' TO abaptext.
+        LOOP AT ev_desc-dd03v INTO wafield.
+            lv_strlen = strlen( wafield-fieldname ).
+            lv_field = '                                :'.
+            lv_field+0(lv_strlen) = wafield-fieldname.
+            lv_field_desc = wafield-ddtext.
+            APPEND |    { lv_field } { lv_field_desc }| TO abaptext.
+        ENDLOOP.
+        APPEND '' TO abaptext.
+    ENDIF.
 
   ENDMETHOD.
 
@@ -1464,6 +1617,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         APPEND |Row { lv_row }| TO abaptext.
         CLEAR lv_lineoffset.
         LOOP AT ls_data_table_desc-dd03v INTO wafield.
+            CLEAR lv_value.
             lv_strlen = strlen( wafield-fieldname ).
             lv_field = '                                :'.
             lv_field+0(lv_strlen) = wafield-fieldname.
@@ -1482,8 +1636,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                 lv_lineoffset = lv_lineoffset + lv_leng.
             ELSE.
                 " other text like fields
-                lv_value = <fs_entry>+lv_lineoffset(wafield-leng).
-                lv_lineoffset = lv_lineoffset + wafield-leng.
+                IF wafield-leng > 0.
+                    lv_value = <fs_entry>+lv_lineoffset(wafield-leng).
+                    lv_lineoffset = lv_lineoffset + wafield-leng.
+                ENDIF.
             ENDIF.
             APPEND |    { lv_field } { lv_value }| TO abaptext.
         ENDLOOP.
@@ -1516,6 +1672,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           lr_data        TYPE REF TO data,
           lt_comp_tab    TYPE cl_abap_structdescr=>component_table,
           ls_comp_fld    TYPE cl_abap_structdescr=>component.
+    DATA lv_line TYPE string.
 
     " prepare for dynamic SQL query for all rows
     CALL METHOD cl_abap_typedescr=>describe_by_name
@@ -1544,6 +1701,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         EXPORTING
             iv_tabname = iv_tabname
             iv_request = iv_request
+            iv_tsv = iv_tsv
         IMPORTING
             ev_desc = ls_data_table_desc
         CHANGING
@@ -1558,27 +1716,38 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     CREATE DATA lr_data TYPE HANDLE lo_tabtype.
     ASSIGN lr_data->* TO <fs_table>.
 
-    APPEND 'Rows:' TO abaptext.
-    APPEND '' TO abaptext.
-
     " dynamic query for given table name
     SELECT * FROM (lv_tabname) INTO CORRESPONDING FIELDS OF TABLE <fs_table>.
 
-    lv_row = 1.
-    LOOP AT <fs_table> ASSIGNING FIELD-SYMBOL(<fs_row>).
-        APPEND |Row { lv_row }| TO abaptext.
-        APPEND '' TO abaptext.
-        LOOP AT ls_data_table_desc-dd03v INTO wafield.
-            lv_fieldname = wafield-fieldname.
-            ASSIGN COMPONENT lv_fieldname OF STRUCTURE <fs_row> TO <fs_field>.
-            lv_strlen = strlen( wafield-fieldname ).
-            lv_field = '                                :'.
-            lv_field+0(lv_strlen) = wafield-fieldname.
-            APPEND |    { lv_field } { <fs_field> }| TO abaptext.
+    IF iv_tsv = abap_true.
+        LOOP AT <fs_table> ASSIGNING FIELD-SYMBOL(<fs_row1>).
+            CLEAR lv_line.
+            LOOP AT ls_data_table_desc-dd03v INTO wafield.
+                lv_fieldname = wafield-fieldname.
+                ASSIGN COMPONENT lv_fieldname OF STRUCTURE <fs_row1> TO <fs_field>.
+                lv_line = lv_line && |{ <fs_field> }| && '\t'.
+            ENDLOOP.
+            APPEND lv_line TO abaptext.
         ENDLOOP.
+    ELSE.
+        APPEND 'Rows:' TO abaptext.
         APPEND '' TO abaptext.
-        lv_row = lv_row + 1.
-    ENDLOOP.
+        lv_row = 1.
+        LOOP AT <fs_table> ASSIGNING FIELD-SYMBOL(<fs_row2>).
+            APPEND |Row { lv_row }| TO abaptext.
+            APPEND '' TO abaptext.
+            LOOP AT ls_data_table_desc-dd03v INTO wafield.
+                lv_fieldname = wafield-fieldname.
+                ASSIGN COMPONENT lv_fieldname OF STRUCTURE <fs_row2> TO <fs_field>.
+                lv_strlen = strlen( wafield-fieldname ).
+                lv_field = '                                :'.
+                lv_field+0(lv_strlen) = wafield-fieldname.
+                APPEND |    { lv_field } { <fs_field> }| TO abaptext.
+            ENDLOOP.
+            APPEND '' TO abaptext.
+            lv_row = lv_row + 1.
+        ENDLOOP.
+    ENDIF.
 
     rv_success = abap_true.
 
