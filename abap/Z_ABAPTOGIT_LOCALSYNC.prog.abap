@@ -14,7 +14,7 @@ PARAMETERS:
     " Sync mode: active/latest
     p_mode      TYPE string DEFAULT 'active' LOWER CASE OBLIGATORY,
     " TR ID to sync up to, if blank sync to default latest version 
-    p_uttrid    TYPE string LOWER CASE.
+    p_uttrid    TYPE string LOWER CASE,
     " Folder structure
     p_struct    TYPE string DEFAULT 'eclipse' LOWER CASE OBLIGATORY.
 

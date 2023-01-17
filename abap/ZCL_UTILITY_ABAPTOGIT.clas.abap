@@ -21,12 +21,17 @@
 " verified against the state to transport to integration/UAT/PROD system.
 " Active version mode should be used for exploring what are inside a given system (for
 " static scan/analysis).
+" ADO PAT requires privilege to have code read/write or full, identity read (to specify real author
+" upon pushing ADO commit)
 CLASS ZCL_UTILITY_ABAPTOGIT DEFINITION
   PUBLIC
   FINAL
   CREATE PUBLIC .
 
 PUBLIC SECTION.
+
+    " list of TR IDs
+    TYPES: tty_trids TYPE TABLE OF string.
 
     " constructor
     " io_objtelemetry - class object for telemetry
@@ -105,11 +110,15 @@ PUBLIC SECTION.
 
     " spot sync ABAP objects in a TR
     " iv_trid - TR ID
+    " iv_user - TR owner
+    " iv_domain - email domain for TR owner
     " iv_packagenames - package names to include in commit, separated by comma
     " iv_prefix - branch prefix
     METHODS spotsync_tr
         IMPORTING
             iv_trid         TYPE string
+            iv_user         TYPE string DEFAULT ''
+            iv_domain       TYPE string DEFAULT ''
             iv_packagenames TYPE string
             iv_prefix       TYPE string DEFAULT 'users/system/'
         RETURNING VALUE(rv_success) TYPE string.
@@ -126,19 +135,43 @@ PUBLIC SECTION.
     " sync TRs that not yet sync-ed to Git since last TR marked in repo sync status file
     " iv_branch - branch name to push the changes to
     " iv_packagenames - package names to include in commit, separated by comma
+    " iv_domain - email domain for TR owner to specify real author of Git commit, blank means not to specify
     " iv_rootfolder - the root folder in Git local clone for ABAP objects to add to, shared by all packages in SAP, case sensitive
     " iv_folder_structure - 'flat' or 'eclipse'
+    " et_trids - TR IDs inspected regardless Git sync-ed or not
+    " et_synctrids - TR IDs Git sync-ed
     METHODS catchup_trs
         IMPORTING
             iv_branch           TYPE string
             iv_packagenames     TYPE string
+            iv_domain           TYPE string DEFAULT ''
             iv_rootfolder       TYPE string DEFAULT '/SRC/'
             iv_folder_structure TYPE string DEFAULT 'eclipse'
+        EXPORTING
+            et_trids            TYPE tty_trids
+            et_synctrids        TYPE tty_trids
+        RETURNING VALUE(rv_success) TYPE string.
+
+    " get heatmap of code change stats in given date range
+    " iv_packagenames - package names to include in commit, separated by comma
+    " iv_fromdat - date to include from
+    " iv_todat - date to include to
+    METHODS heatmap_trs
+        IMPORTING
+            iv_packagenames TYPE string
+            iv_fromdat      TYPE d
+            iv_todat        TYPE d
+            iv_resultfile   TYPE string
         RETURNING VALUE(rv_success) TYPE string.
 
 PROTECTED SECTION.
 
 PRIVATE SECTION.
+
+    CONSTANTS c_delim TYPE string VALUE '\\'.
+
+    " max difference in seconds for an imported TR to date time of now
+    CONSTANTS c_importtr_diff_gap TYPE i VALUE 30.
 
     " code object used in downloading ABAP code object to local disk
     TYPES: BEGIN OF ts_code_object,
@@ -223,6 +256,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     rv_success = me->oref_ado->push_tr_commit_objects(
         EXPORTING
             iv_trid = iv_trid
+            iv_user = iv_user
+            iv_domain = iv_domain
             iv_branch = lv_basebranch
             iv_comment = lv_comment
             it_commit_objects = lt_commit_objects
@@ -248,6 +283,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lv_comment TYPE string.
     DATA lv_rootfolder TYPE string.
     DATA lv_synccnt TYPE i.
+    DATA lv_trtimestamp TYPE timestamp.
+    DATA lv_nowtimestamp TYPE timestamp.
+    DATA lv_diff TYPE tzntstmpl.
 
     lv_rootfolder = iv_rootfolder.
     TRANSLATE lv_rootfolder TO UPPER CASE.
@@ -284,10 +322,42 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
     " push each TR ID to Git repo
     LOOP AT lt_trids INTO DATA(watrid).
+
+        " an imported TR may be released before catchup starts but importing finishes after catchup finishes, the changes are missing in git commit
+        " in this case the TR should be skipped, as well as TRs followed and let next catchup to carry the changes
+        IF watrid-trid+0(3) <> sy-sysid.
+            cl_abap_tstmp=>systemtstmp_syst2utc(
+                EXPORTING
+                    syst_date = watrid-dat
+                    syst_time = watrid-tim
+                IMPORTING
+                    utc_tstmp = lv_trtimestamp
+                 ).
+            cl_abap_tstmp=>systemtstmp_syst2utc(
+                EXPORTING
+                    syst_date = sy-datum
+                    syst_time = sy-uzeit
+                IMPORTING
+                    utc_tstmp = lv_nowtimestamp
+                 ).
+            cl_abap_tstmp=>subtract(
+                EXPORTING
+                    tstmp1 = lv_nowtimestamp
+                    tstmp2 = lv_trtimestamp
+                RECEIVING
+                    r_secs = lv_diff
+                 ).
+            IF lv_diff < c_importtr_diff_gap.
+                me->write_telemetry( iv_message = |Release time of import TR { watrid-trid } is too close with risk of changes missing in git commit| iv_kind = 'info' ).
+                rv_success = abap_true.
+                EXIT.
+            ENDIF.
+        ENDIF.
+
         CLEAR lt_commit_objects.
         rv_success = me->oref_tr->get_tr_commit_objects(
             EXPORTING
-                iv_trid = watrid
+                iv_trid = watrid-trid
                 iv_packagenames = iv_packagenames
             IMPORTING
                 ev_comment = lv_comment
@@ -297,7 +367,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         CHECK rv_success = abap_true.
         rv_success = me->oref_ado->push_tr_commit_objects(
             EXPORTING
-                iv_trid = watrid
+                iv_trid = watrid-trid
+                iv_user = watrid-user
+                iv_domain = iv_domain
                 iv_branch = iv_branch
                 iv_comment = lv_comment
                 iv_rootfolder = iv_rootfolder
@@ -307,12 +379,73 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 ev_synccnt = lv_synccnt
                  ).
         CHECK rv_success = abap_true.
+        IF et_trids IS SUPPLIED.
+            APPEND watrid-trid TO et_trids.
+        ENDIF.
         IF lv_synccnt = 0.
-            me->write_telemetry( iv_message = |no push for TR { watrid }| iv_kind = 'info' ).
+            me->write_telemetry( iv_message = |no push for TR { watrid-trid }| iv_kind = 'info' ).
         ELSE.
-            me->write_telemetry( iv_message = |caught up TR { watrid } with { lv_synccnt } object(s) | iv_kind = 'info' ).
+            IF et_synctrids IS SUPPLIED.
+                APPEND watrid-trid TO et_synctrids.
+            ENDIF.
+            me->write_telemetry( iv_message = |caught up TR { watrid-trid } with { lv_synccnt } object(s) | iv_kind = 'info' ).
         ENDIF.
     ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD HEATMAP_TRS.
+
+    DATA lt_trids TYPE ZCL_UTILITY_ABAPTOGIT_ADO=>tty_trids.
+    DATA lt_commit_objects TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_commit_object.
+    DATA lt_stats TYPE TABLE OF string INITIAL SIZE 0.
+    DATA lv_insertions TYPE i.
+    DATA lv_deletions TYPE i.
+
+    rv_success = abap_true.
+
+    ZCL_UTILITY_ABAPTOGIT_ADO=>get_trs_daterange(
+        EXPORTING
+            iv_fromdat = iv_fromdat
+            iv_todat = iv_todat
+        IMPORTING
+            et_trids = lt_trids
+             ).
+
+    APPEND |System,TR,User,Date,Time,Insertions,Deletions| TO lt_stats.
+
+    LOOP AT lt_trids INTO DATA(wa_trid).
+        CLEAR: lt_commit_objects, lv_insertions, lv_deletions.
+        me->oref_tr->get_tr_commit_objects(
+            EXPORTING
+                iv_trid = wa_trid-trid
+                iv_packagenames = iv_packagenames
+                iv_deltastats = abap_true
+            CHANGING
+                it_commit_objects = lt_commit_objects
+             ).
+        LOOP AT lt_commit_objects INTO DATA(wa_co).
+            lv_insertions = lv_insertions + wa_co-insertions.
+            lv_deletions = lv_deletions + wa_co-deletions.
+        ENDLOOP.
+        DATA(lv_date) = |{ wa_trid-dat+4(2) }/{ wa_trid-dat+6(2) }/{ wa_trid-dat(4) }|.
+        DATA(lv_time) = |{ wa_trid-tim(2) }:{ wa_trid-tim+2(2) }:{ wa_trid-tim+4(2) }|.
+        APPEND |{ sy-sysid },{ wa_trid-user },{ wa_trid-trid },{ lv_date },{ lv_time },{ lv_insertions },{ lv_deletions }| TO lt_stats.
+    ENDLOOP.
+
+    CALL FUNCTION 'GUI_DOWNLOAD'
+        EXPORTING
+            filename = iv_resultfile
+            filetype = 'ASC'
+            write_field_separator = 'X'
+        TABLES
+            data_tab = lt_stats
+        EXCEPTIONS
+            OTHERS = 1.
+    IF sy-subrc <> 0.
+        me->write_telemetry( iv_message = |HEATMAP_TRS fails to save local file { iv_resultfile }| ).
+        rv_success = abap_false.
+    ENDIF.
 
   ENDMETHOD.
 
@@ -345,7 +478,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     ENDIF.
 
     " root folder for a package like \src\.schemapcr\
-    lv_folder = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }\\|.
+    lv_folder = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }{ c_delim }|.
     lv_codefolder = lv_folder.
     CALL FUNCTION 'GUI_CREATE_DIRECTORY'
         EXPORTING
@@ -393,7 +526,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 EXCEPTIONS
                     OTHERS = 1.
         ENDIF.
-        lv_path = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }\\{ lv_code_name }|.
+        lv_path = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }{ c_delim }{ lv_code_name }|.
         CALL FUNCTION 'GUI_DOWNLOAD'
             EXPORTING
                 filename = lv_path
@@ -449,7 +582,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 EXCEPTIONS
                     OTHERS = 1.
         ENDIF.
-        lv_path = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }\\{ lv_code_name }|.
+        lv_path = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }{ c_delim }{ lv_code_name }|.
         CALL FUNCTION 'GUI_DOWNLOAD'
             EXPORTING
                 filename = lv_path
@@ -512,7 +645,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     ENDIF.
 
     " root folder for a package like \src\<branch name>\
-    lv_folder = |{ lv_basefolder }{ iv_package }\\|.
+    lv_folder = |{ lv_basefolder }{ iv_package }{ c_delim }|.
     lv_codefolder = lv_folder.
     CALL FUNCTION 'GUI_CREATE_DIRECTORY'
         EXPORTING
@@ -671,7 +804,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 EXCEPTIONS
                     OTHERS = 1.
         ENDIF.
-        lv_path = |{ lv_basefolder }{ iv_package }\\{ lv_code_name }|.
+        lv_path = |{ lv_basefolder }{ iv_package }{ c_delim }{ lv_code_name }|.
         CALL FUNCTION 'GUI_DOWNLOAD'
             EXPORTING
                 filename = lv_path
@@ -709,7 +842,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                     EXCEPTIONS
                         OTHERS = 1.
             ENDIF.
-            lv_path = |{ lv_basefolder }{ iv_package }\\{ lv_code_name }|.
+            lv_path = |{ lv_basefolder }{ iv_package }{ c_delim }{ lv_code_name }|.
             CALL FUNCTION 'GUI_DOWNLOAD'
                 EXPORTING
                     filename = lv_path
