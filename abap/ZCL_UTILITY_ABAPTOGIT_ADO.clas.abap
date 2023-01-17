@@ -11,6 +11,9 @@ PUBLIC SECTION.
     " sync status file name to keep track on last sync-ed TR
     CONSTANTS:  c_sync_status_file   TYPE string VALUE '.sync_status.json'.
 
+    CONSTANTS c_delim TYPE string VALUE '\\'.
+    CONSTANTS c_delimgit TYPE string VALUE '/'.
+
     " payload for ADO REST API to create a push
     TYPES: BEGIN OF ts_item,
             path TYPE string,
@@ -25,9 +28,14 @@ PUBLIC SECTION.
             newContent  TYPE ts_newcontent,
            END OF ts_change.
     TYPES: tty_changes TYPE TABLE OF ts_change WITH KEY changeType.
+    TYPES: BEGIN OF ts_user,
+            email   TYPE string,
+            name    TYPE string,
+           END OF ts_user.
     TYPES: BEGIN OF ts_commit,
             changes TYPE tty_changes,
             comment TYPE string,
+            author  TYPE ts_user,
            END OF ts_commit.
     TYPES: tty_commits TYPE TABLE OF ts_commit WITH KEY comment.
     TYPES: BEGIN OF ts_refupdate,
@@ -41,7 +49,13 @@ PUBLIC SECTION.
            END OF ts_push_json_req.
 
     " list of TR IDs to sync to Git
-    TYPES: tty_trids TYPE TABLE OF string.
+    TYPES: BEGIN OF ty_trid,
+            trid TYPE string,
+            user TYPE string,
+            dat  TYPE d,
+            tim  TYPE t,
+           END OF ty_trid.
+    TYPES: tty_trids TYPE TABLE OF ty_trid.
 
     " payload of JSON file in Git repo root folder to mark down sync status
     TYPES: BEGIN OF ts_sync_status,
@@ -72,6 +86,8 @@ PUBLIC SECTION.
 
     " push the ABAP objects to Git for a TR
     " iv_trid - TR ID to push to Git
+    " iv_user - TR owner, blank means not to specify real author
+    " iv_domain - TR owner email domain, blank means not to specify real author
     " iv_branch - branch name to push the changes to
     " iv_comment - commit comment retrieved from get_tr_commit_objects
     " iv_rootfolder - the root folder in Git local clone for ABAP objects to add to, shared by all packages in SAP
@@ -81,6 +97,8 @@ PUBLIC SECTION.
     METHODS push_tr_commit_objects
         IMPORTING
             iv_trid             TYPE string
+            iv_user             TYPE string DEFAULT ''
+            iv_domain           TYPE string DEFAULT ''
             iv_branch           TYPE string
             iv_comment          TYPE string
             iv_rootfolder       TYPE string DEFAULT '/SRC/'
@@ -95,9 +113,31 @@ PUBLIC SECTION.
     " et_trids - list of TR IDs retrieved
     CLASS-METHODS get_trs
         IMPORTING
-            iv_fromtrid   TYPE string OPTIONAL
+            iv_fromtrid TYPE string OPTIONAL
         EXPORTING
-            et_trids      TYPE tty_trids.
+            et_trids    TYPE tty_trids.
+
+    " get IDs of TRs between a date range
+    " iv_fromdat - date to include from
+    " iv_todat - date to include to
+    " et_trids - list of TR IDs retrieved
+    CLASS-METHODS get_trs_daterange
+        IMPORTING
+            iv_fromdat  TYPE d
+            iv_todat    TYPE d
+        EXPORTING
+            et_trids    TYPE tty_trids.
+
+    " get IDs of workbench TRs since a date/time
+    " iv_fromdat - date to include from
+    " iv_fromtim - time to include from
+    " et_trids - list of TR IDs retrieved
+    CLASS-METHODS get_wbtrs
+        IMPORTING
+            iv_fromdat  TYPE d
+            iv_fromtim  TYPE t
+        EXPORTING
+            et_trids    TYPE tty_trids.
 
     " construct source code file name in Git repo from ABAP code object name
     " iv_commit_object - ABAP object to commit
@@ -156,6 +196,7 @@ PROTECTED SECTION.
 PRIVATE SECTION.
 
     CONSTANTS: c_host                       TYPE string VALUE 'https://dev.azure.com/',
+               c_hostid                     TYPE string VALUE 'https://vssps.dev.azure.com/',
                c_head                       TYPE string VALUE 'refs/heads/',
                c_folder_structure_eclipse   TYPE string VALUE 'eclipse',
                c_folder_structure_flat      TYPE string VALUE 'flat'.
@@ -199,6 +240,15 @@ PRIVATE SECTION.
             iv_changetype   TYPE i
         CHANGING
             iv_commit       TYPE ts_commit.
+
+    " fetch display name of a user for real author specified in commit
+    METHODS get_displayname_ado
+        IMPORTING
+            iv_user     TYPE string
+            iv_domain   TYPE string
+        EXPORTING
+            ev_name     TYPE string
+        RETURNING VALUE(rv_success) TYPE string.
 
     " push changes of a TR to Git by ADO REST API
     METHODS push_ado
@@ -251,6 +301,7 @@ PRIVATE SECTION.
     " wrapper to make HTTP POST request with response de-serialized
     METHODS http_get_json
         IMPORTING
+            iv_host         TYPE string DEFAULT c_host
             iv_path         TYPE string
             iv_username     TYPE string
             iv_pat          TYPE string
@@ -271,136 +322,6 @@ ENDCLASS.
 
 CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
-  METHOD CONSTRUCTOR.
-
-    me->username = iv_username.
-    me->pat = iv_pat.
-    me->orgid = iv_orgid.
-    me->repoid = iv_repoid.
-    me->project = iv_project.
-
-    IF io_objtelemetry IS SUPPLIED.
-        me->oref_telemetry = io_objtelemetry.
-    ENDIF.
-
-    IF iv_methtelemetry IS SUPPLIED.
-        me->method_name_telemetry = iv_methtelemetry.
-    ENDIF.
-
-  ENDMETHOD.
-
-  METHOD PUSH_TR_COMMIT_OBJECTS.
-
-    DATA lv_commit_object TYPE ZCL_UTILITY_ABAPTOGIT_TR=>ts_commit_object.
-    DATA lv_commit TYPE ts_commit.
-    DATA lv_commitid TYPE string.
-    DATA lv_changetype TYPE i.
-    DATA lv_syncfilecontent TYPE string.
-    DATA lv_rootfolder TYPE string.
-    DATA lv_synccnt TYPE i.
-    DATA lv_success TYPE string.
-
-    lv_rootfolder = iv_rootfolder.
-    TRANSLATE lv_rootfolder TO UPPER CASE.
-
-    " fetch the head commit ID for given branch
-    rv_success = me->get_commit_ado(
-        EXPORTING
-            iv_branch = iv_branch
-        IMPORTING
-            ev_commitid = lv_commitid
-             ).
-    CHECK rv_success = abap_true.
-
-    " construct commit object list payload for push ADO REST call
-    LOOP AT it_commit_objects INTO lv_commit_object.
-
-        " change type for add/edit/delete
-        IF lv_commit_object-delflag <> ' '.
-            lv_changetype = 16.
-        ELSEIF lv_commit_object-verno > 1.
-            lv_changetype = 2.
-        ELSE.
-            lv_changetype = 1.
-        ENDIF.
-
-        DATA(lv_code_name) = build_code_name(
-            EXPORTING
-                iv_commit_object = lv_commit_object
-                iv_local_folder = abap_false
-                iv_folder_structure = iv_folder_structure
-                 ).
-        DATA(lv_filepath) = |{ lv_rootfolder }{ lv_commit_object-devclass }/{ lv_code_name }|.
-
-        " config change delta/full file may exist
-        IF lv_commit_object-objtype = 'CDAT'.
-            lv_success = me->get_item_ado(
-                EXPORTING
-                    iv_branch = iv_branch
-                    iv_itempath = lv_filepath
-                    iv_read = abap_false
-                     ).
-            IF lv_success = abap_true.
-                lv_changetype = 2.
-            ELSE.
-                lv_changetype = 1.
-            ENDIF.
-        ENDIF.
-
-        " add the ABAP object change to the changes section of the payload
-        me->build_push_json(
-            EXPORTING
-                iv_filename = lv_filepath
-                iv_filecontent = lv_commit_object-filecontent
-                iv_changetype = lv_changetype
-            CHANGING
-                iv_commit = lv_commit
-             ).
-
-        lv_synccnt = lv_synccnt + 1.
-
-    ENDLOOP.
-
-    IF ev_synccnt IS SUPPLIED.
-        ev_synccnt = lv_synccnt.
-    ENDIF.
-
-    IF lv_synccnt = 0.
-        rv_success = abap_true.
-        EXIT.
-    ENDIF.
-
-    " update sync status file with the TR id
-    build_sync_status(
-        EXPORTING
-            iv_mode = ZCL_UTILITY_ABAPTOGIT_TR=>c_latest_version
-            iv_trid = iv_trid
-        IMPORTING
-            ev_filecontent = lv_syncfilecontent
-             ).
-    DATA(lv_syncstatuspath) = |{ lv_rootfolder }{ c_sync_status_file }|.
-    me->build_push_json(
-        EXPORTING
-            iv_filename = lv_syncstatuspath
-            iv_filecontent = lv_syncfilecontent
-            iv_changetype = 2
-        CHANGING
-            iv_commit = lv_commit
-             ).
-
-    lv_commit-comment = iv_comment.
-
-    me->write_telemetry( iv_message = |{ lv_synccnt } objects to push for TR { iv_trid }| iv_kind = 'info' ).
-
-    " push the changes to Git by ADO REST call
-    rv_success = me->push_ado(
-        EXPORTING
-            iv_branch = iv_branch
-            iv_commit = lv_commit
-            iv_commitid = lv_commitid
-             ).
-
-  ENDMETHOD.
 
   METHOD BUILD_CODE_NAME.
 
@@ -416,18 +337,18 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             IF iv_commit_object-objname CP |L{ iv_commit_object-fugr }*|.
                 " include case
                 IF iv_local_folder = abap_true.
-                    ev_file_folder = |{ iv_base_folder }\\Source Code Library\\Function Groups\\{ iv_commit_object-fugr }\\Includes|.
-                    rv_name = |Source Code Library\\Function Groups\\{ iv_commit_object-fugr }\\Includes\\{ iv_commit_object-objname }.abap|.
+                    ev_file_folder = |{ iv_base_folder }{ c_delim }Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes|.
+                    rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes{ c_delim }{ iv_commit_object-objname }.abap|.
                 ELSE.
-                    rv_name = |Source Code Library/Function Groups/{ iv_commit_object-fugr }/Includes/{ iv_commit_object-objname }.abap|.
+                    rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ iv_commit_object-fugr }{ c_delimgit }Includes{ c_delimgit }{ iv_commit_object-objname }.abap|.
                 ENDIF.
             ELSE.
                 " function module case
                 IF iv_local_folder = abap_true.
-                    ev_file_folder = |{ iv_base_folder }\\Source Code Library\\Function Groups\\{ iv_commit_object-fugr }\\Function Modules|.
-                    rv_name = |Source Code Library\\Function Groups\\{ iv_commit_object-fugr }\\Function Modules\\{ iv_commit_object-objname }.abap|.
+                    ev_file_folder = |{ iv_base_folder }{ c_delim }Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Function Modules|.
+                    rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Function Modules{ c_delim }{ iv_commit_object-objname }.abap|.
                 ELSE.
-                    rv_name = |Source Code Library/Function Groups/{ iv_commit_object-fugr }/Function Modules/{ iv_commit_object-objname }.abap|.
+                    rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ iv_commit_object-fugr }{ c_delimgit }Function Modules{ c_delimgit }{ iv_commit_object-objname }.abap|.
                 ENDIF.
             ENDIF.
         ENDIF.
@@ -439,10 +360,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }\\Source Code Library\\Function Groups\\{ iv_commit_object-fugr }\\Includes|.
-                rv_name = |Source Code Library\\Function Groups\\{ iv_commit_object-fugr }\\Includes\\{ iv_commit_object-objname }.abap|.
+                ev_file_folder = |{ iv_base_folder }{ c_delim }Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes|.
+                rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes{ c_delim }{ iv_commit_object-objname }.abap|.
             ELSE.
-                rv_name = |Source Code Library/Function Groups/{ iv_commit_object-fugr }/Includes/{ iv_commit_object-objname }.abap|.
+                rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ iv_commit_object-fugr }{ c_delimgit }Includes{ c_delimgit }{ iv_commit_object-objname }.abap|.
             ENDIF.
         ENDIF.
 
@@ -453,10 +374,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-objname }.clas.testclasses.abap|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }\\Source Code Library\\Classes|.
-                rv_name = |Source Code Library\\Classes\\{ iv_commit_object-objname }.clas.testclasses.abap|.
+                ev_file_folder = |{ iv_base_folder }{ c_delim }Source Code Library{ c_delim }Classes|.
+                rv_name = |Source Code Library{ c_delim }Classes{ c_delim }{ iv_commit_object-objname }.clas.testclasses.abap|.
             ELSE.
-                rv_name = |Source Code Library/Classes/{ iv_commit_object-objname }.clas.testclasses.abap|.
+                rv_name = |Source Code Library{ c_delimgit }Classes{ c_delimgit }{ iv_commit_object-objname }.clas.testclasses.abap|.
             ENDIF.
         ENDIF.
 
@@ -467,10 +388,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-objname }.enho.abap|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }\\Enhancements\\Enhancement Implementations|.
-                rv_name = |Enhancements\\Enhancement Implementations\\{ iv_commit_object-objname }.enho.abap|.
+                ev_file_folder = |{ iv_base_folder }{ c_delim }Enhancements{ c_delim }Enhancement Implementations|.
+                rv_name = |Enhancements{ c_delim }Enhancement Implementations{ c_delim }{ iv_commit_object-objname }.enho.abap|.
             ELSE.
-                rv_name = |Enhancements/Enhancement Implementations/{ iv_commit_object-objname }.enho.abap|.
+                rv_name = |Enhancements{ c_delimgit }Enhancement Implementations{ c_delimgit }{ iv_commit_object-objname }.enho.abap|.
             ENDIF.
         ENDIF.
 
@@ -481,10 +402,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-objname }.tabl.json|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }\\Dictionary\\Data Tables|.
-                rv_name = |Dictionary\\Data Tables\\{ iv_commit_object-objname }.tabl.json|.
+                ev_file_folder = |{ iv_base_folder }{ c_delim }Dictionary{ c_delim }Data Tables|.
+                rv_name = |Dictionary{ c_delim }Data Tables{ c_delim }{ iv_commit_object-objname }.tabl.json|.
             ELSE.
-                rv_name = |Dictionary/Data Tables/{ iv_commit_object-objname }.tabl.json|.
+                rv_name = |Dictionary{ c_delimgit }Data Tables{ c_delimgit }{ iv_commit_object-objname }.tabl.json|.
             ENDIF.
         ENDIF.
 
@@ -495,10 +416,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-objname }.schm.txt|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }\\Schema\\{ iv_commit_object-progcls }|.
-                rv_name = |Schema\\{ iv_commit_object-progcls }\\{ iv_commit_object-objname }.schm.txt|.
+                ev_file_folder = |{ iv_base_folder }{ c_delim }Schema{ c_delim }{ iv_commit_object-progcls }|.
+                rv_name = |Schema{ c_delim }{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.schm.txt|.
             ELSE.
-                rv_name = |Schema/{ iv_commit_object-progcls }/{ iv_commit_object-objname }.schm.txt|.
+                rv_name = |Schema{ c_delimgit }{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.schm.txt|.
             ENDIF.
         ENDIF.
 
@@ -509,10 +430,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-objname }.pcr.txt|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }\\PCR\\{ iv_commit_object-progcls }|.
-                rv_name = |PCR\\{ iv_commit_object-progcls }\\{ iv_commit_object-objname }.pcr.txt|.
+                ev_file_folder = |{ iv_base_folder }{ c_delim }PCR{ c_delim }{ iv_commit_object-progcls }|.
+                rv_name = |PCR{ c_delim }{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.pcr.txt|.
             ELSE.
-                rv_name = |PCR/{ iv_commit_object-progcls }/{ iv_commit_object-objname }.pcr.txt|.
+                rv_name = |PCR{ c_delimgit }{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.pcr.txt|.
             ENDIF.
         ENDIF.
 
@@ -523,10 +444,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }\\{ iv_commit_object-devclass }\\{ iv_commit_object-progcls }|.
-                rv_name = |{ iv_commit_object-progcls }\\{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
+                ev_file_folder = |{ iv_base_folder }{ c_delim }{ iv_commit_object-devclass }{ c_delim }{ iv_commit_object-progcls }|.
+                rv_name = |{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
             ELSE.
-                rv_name = |{ iv_commit_object-progcls }/{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
+                rv_name = |{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
             ENDIF.
         ENDIF.
 
@@ -550,10 +471,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
                 lv_type = 'Includes'.
             ENDIF.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }\\Source Code Library\\{ lv_type }|.
-                rv_name = |Source Code Library\\{ lv_type }\\{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
+                ev_file_folder = |{ iv_base_folder }{ c_delim }Source Code Library{ c_delim }{ lv_type }|.
+                rv_name = |Source Code Library{ c_delim }{ lv_type }{ c_delim }{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
             ELSE.
-                rv_name = |Source Code Library/{ lv_type }/{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
+                rv_name = |Source Code Library{ c_delimgit }{ lv_type }{ c_delimgit }{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
             ENDIF.
         ENDIF.
 
@@ -561,160 +482,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
   ENDMETHOD.
 
-  METHOD GET_TRS.
-
-    IF iv_fromtrid IS SUPPLIED.
-        " fetch TRs later than given released TR (workbench or customizing)
-        DATA lv_dat TYPE d.
-        DATA lv_tim TYPE t.
-        SELECT SINGLE as4date INTO lv_dat FROM e070 WHERE trkorr = iv_fromtrid.
-        SELECT SINGLE as4time INTO lv_tim FROM e070 WHERE trkorr = iv_fromtrid.
-        SELECT trkorr INTO TABLE @et_trids FROM e070
-            WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R' AND ( as4date > @lv_dat OR ( as4date = @lv_dat AND as4time > @lv_tim ) )
-            ORDER BY as4date ASCENDING, as4time ASCENDING.
-    ELSE.
-        " fetch latest released TR (workbench or customizing)
-        SELECT trkorr FROM e070 INTO TABLE @et_trids UP TO 1 ROWS
-            WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R'
-            ORDER BY as4date DESCENDING, as4time DESCENDING.
-    ENDIF.
-
-  ENDMETHOD.
-
-  METHOD BUILD_SYNC_STATUS.
-    DATA lv_sync_status TYPE ts_sync_status.
-    DATA lt_trids TYPE tty_trids.
-    DATA lr_json_serializer TYPE REF TO cl_trex_json_serializer.
-
-    IF iv_trid IS SUPPLIED.
-        lv_sync_status-trid = iv_trid.
-    ELSEIF iv_mode = ZCL_UTILITY_ABAPTOGIT_TR=>c_latest_version.
-        " in active version mode, it's not sync-ed to latest TR but active/latest version of objects
-        get_trs( IMPORTING et_trids = lt_trids ).
-        lv_sync_status-trid = lt_trids[ 1 ].
-    ENDIF.
-
-    lv_sync_status-mode = iv_mode.
-    lv_sync_status-updatedate = sy-datum.
-    lv_sync_status-updatetime = sy-uzeit.
-    CREATE OBJECT lr_json_serializer EXPORTING data = lv_sync_status.
-    lr_json_serializer->serialize( ).
-    ev_filecontent = lr_json_serializer->get_data( ).
-  ENDMETHOD.
-
-  METHOD SAVE_SYNC_STATUS.
-
-    DATA lv_json TYPE string.
-    DATA lt_filecontent TYPE TABLE OF string.
-
-    IF iv_trid IS SUPPLIED.
-        build_sync_status(
-            EXPORTING
-                iv_mode = iv_mode
-                iv_trid = iv_trid
-            IMPORTING
-                ev_filecontent = lv_json
-                 ).
-    ELSE.
-        build_sync_status(
-            EXPORTING
-                iv_mode = iv_mode
-            IMPORTING
-                ev_filecontent = lv_json
-                 ).
-    ENDIF.
-
-    APPEND lv_json TO lt_filecontent.
-    CALL FUNCTION 'GUI_DOWNLOAD'
-          EXPORTING
-            filename = iv_file
-            filetype = 'ASC'
-            write_field_separator = 'X'
-          TABLES
-            data_tab = lt_filecontent
-          EXCEPTIONS
-            OTHERS = 1.
-    rv_success = abap_true.
-    IF sy-subrc <> 0.
-        rv_success = abap_false.
-    ENDIF.
-
-  ENDMETHOD.
-
-  METHOD LOAD_SYNC_STATUS.
-    TRY.
-        DATA lo_parse TYPE REF TO /ui5/cl_json_parser.
-        CREATE OBJECT lo_parse.
-        lo_parse->parse( json = iv_filecontent ).
-        DATA(lt_ret_data) = lo_parse->m_entries.
-        ev_sync_status-trid = lt_ret_data[ name = 'trid' ]-value.
-        ev_sync_status-mode = lt_ret_data[ name = 'mode' ]-value.
-        ev_sync_status-updatedate = lt_ret_data[ name = 'updatedate' ]-value.
-        ev_sync_status-updatetime = lt_ret_data[ name = 'updatetime' ]-value.
-        rv_success = abap_true.
-    CATCH /ui5/CX_VFS_ERROR.
-        rv_success = abap_false.
-    ENDTRY.
-  ENDMETHOD.
-
-  METHOD GET_ITEM_ADO.
-    " https://learn.microsoft.com/en-us/rest/api/azure/devops/git/items/get?view=azure-devops-rest-7.1&tabs=HTTP
-    DATA lt_ret_data TYPE /ui5/cl_json_parser=>t_entry_map.
-    DATA lv_read TYPE string.
-    IF iv_read = abap_true.
-        lv_read = 'true'.
-    ELSE.
-        lv_read = 'false'.
-    ENDIF.
-    DATA(itemPath) = |{ me->orgid }/_apis/git/repositories/{ me->repoid }/items?path={ iv_itempath }&includeContent={ lv_read }&versionDescriptor.version={ iv_branch }&versionDescriptor.versionType=branch&api-version=7.1-preview.1|.
-    DATA lv_status TYPE i.
-    ev_content = ''.
-    me->HTTP_GET_JSON(
-        EXPORTING
-            iv_path = itemPath
-            iv_username = me->username
-            iv_pat = me->pat
-            iv_log = iv_read
-        IMPORTING
-            ev_status = lv_status
-            et_entry_map = lt_ret_data
-             ).
-    rv_success = abap_true.
-    IF lv_status < 200 OR lv_status >= 300.
-        IF iv_read = abap_true.
-            me->write_telemetry( iv_message = |GET_ITEM_ADO fails to get item content from Git for branch { iv_branch }, path { iv_itempath }| ).
-        ENDIF.
-        rv_success = abap_false.
-        EXIT.
-    ENDIF.
-    IF iv_read = abap_true.
-        ev_content = lt_ret_data[ name = 'content' ]-value.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD GET_COMMIT_ADO.
-    " https://learn.microsoft.com/en-us/rest/api/azure/devops/git/commits/get?view=azure-devops-rest-7.1&tabs=HTTP
-    DATA lt_ret_data TYPE /ui5/cl_json_parser=>t_entry_map.
-    DATA(commitPath) = |{ me->orgid }/_apis/git/repositories/{ me->repoid }/commits?searchCriteria.$top=1&searchCriteria.itemVersion.version={ iv_branch }&api-version=7.1-preview.1|.
-    DATA lv_status TYPE i.
-    ev_commitid = ''.
-    me->HTTP_GET_JSON(
-        EXPORTING
-            iv_path = commitPath
-            iv_username = me->username
-            iv_pat = me->pat
-        IMPORTING
-            ev_status = lv_status
-            et_entry_map = lt_ret_data
-             ).
-    rv_success = abap_true.
-    IF lv_status < 200 OR lv_status >= 300.
-        me->write_telemetry( iv_message = |GET_COMMIT_ADO fails to get commit from Git for branch { iv_branch }| ).
-        rv_success = abap_false.
-        EXIT.
-    ENDIF.
-    ev_commitId = lt_ret_data[ name = 'commitId' parent = '/value/1' ]-value.
-  ENDMETHOD.
 
   METHOD BUILD_PUSH_JSON.
     " https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pushes/create?view=azure-devops-rest-7.1&tabs=HTTP
@@ -729,31 +496,47 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     APPEND lv_change TO iv_commit-changes.
   ENDMETHOD.
 
-  METHOD PUSH_ADO.
-    " https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pushes/create?view=azure-devops-rest-7.1&tabs=HTTP
-    DATA(lv_branch) = |{ c_head }{ iv_branch }|.
-    DATA(createPushPath) = |{ me->orgid }/_apis/git/repositories/{ me->repoid }/pushes?api-version=7.1-preview.2|.
-    DATA lv_json_req TYPE ts_push_json_req.
-    DATA lv_status TYPE i.
-    DATA lt_ret_data TYPE /ui5/cl_json_parser=>t_entry_map.
-    APPEND iv_commit TO lv_json_req-commits.
-    APPEND VALUE ts_refupdate( name = lv_branch oldObjectId = iv_commitid ) TO lv_json_req-refUpdates.
-    me->HTTP_POST_JSON(
-        EXPORTING
-            iv_path = createPushPath
-            iv_username = me->username
-            iv_pat = me->pat
-            iv_json = lv_json_req
-        IMPORTING
-            ev_status = lv_status
-            et_entry_map = lt_ret_data
-             ).
-    rv_success = abap_true.
-    IF lv_status < 200 OR lv_status >= 300.
-        me->write_telemetry( iv_message = |PUSH_ADO fails to push to Git { lv_status } for branch { lv_branch } on top of commit { iv_commitid }| ).
-        rv_success = abap_false.
+
+  METHOD BUILD_SYNC_STATUS.
+    DATA lv_sync_status TYPE ts_sync_status.
+    DATA lt_trids TYPE tty_trids.
+    DATA lr_json_serializer TYPE REF TO cl_trex_json_serializer.
+
+    IF iv_trid IS SUPPLIED.
+        lv_sync_status-trid = iv_trid.
+    ELSEIF iv_mode = ZCL_UTILITY_ABAPTOGIT_TR=>c_latest_version.
+        " in active version mode, it's not sync-ed to latest TR but active/latest version of objects
+        get_trs( IMPORTING et_trids = lt_trids ).
+        lv_sync_status-trid = lt_trids[ 1 ]-trid.
     ENDIF.
+
+    lv_sync_status-mode = iv_mode.
+    lv_sync_status-updatedate = sy-datum.
+    lv_sync_status-updatetime = sy-uzeit.
+    CREATE OBJECT lr_json_serializer EXPORTING data = lv_sync_status.
+    lr_json_serializer->serialize( ).
+    ev_filecontent = lr_json_serializer->get_data( ).
   ENDMETHOD.
+
+
+  METHOD CONSTRUCTOR.
+
+    me->username = iv_username.
+    me->pat = iv_pat.
+    me->orgid = iv_orgid.
+    me->repoid = iv_repoid.
+    me->project = iv_project.
+
+    IF io_objtelemetry IS SUPPLIED.
+        me->oref_telemetry = io_objtelemetry.
+    ENDIF.
+
+    IF iv_methtelemetry IS SUPPLIED.
+        me->method_name_telemetry = iv_methtelemetry.
+    ENDIF.
+
+  ENDMETHOD.
+
 
   METHOD CREATE_HTTP_CLIENT.
 
@@ -790,6 +573,108 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
   ENDMETHOD.
 
+
+  METHOD GET_COMMIT_ADO.
+    " https://learn.microsoft.com/en-us/rest/api/azure/devops/git/commits/get?view=azure-devops-rest-7.1&tabs=HTTP
+    DATA lt_ret_data TYPE /ui5/cl_json_parser=>t_entry_map.
+    DATA(commitPath) = |{ me->orgid }/_apis/git/repositories/{ me->repoid }/commits?searchCriteria.$top=1&searchCriteria.itemVersion.version={ iv_branch }&api-version=7.1-preview.1|.
+    DATA lv_status TYPE i.
+    ev_commitid = ''.
+    me->HTTP_GET_JSON(
+        EXPORTING
+            iv_path = commitPath
+            iv_username = me->username
+            iv_pat = me->pat
+        IMPORTING
+            ev_status = lv_status
+            et_entry_map = lt_ret_data
+             ).
+    rv_success = abap_true.
+    IF lv_status < 200 OR lv_status >= 300.
+        me->write_telemetry( iv_message = |GET_COMMIT_ADO fails to get commit from Git for branch { iv_branch }| ).
+        rv_success = abap_false.
+        EXIT.
+    ENDIF.
+    ev_commitId = lt_ret_data[ name = 'commitId' parent = '/value/1' ]-value.
+  ENDMETHOD.
+
+
+  METHOD GET_ITEM_ADO.
+    " https://learn.microsoft.com/en-us/rest/api/azure/devops/git/items/get?view=azure-devops-rest-7.1&tabs=HTTP
+    DATA lt_ret_data TYPE /ui5/cl_json_parser=>t_entry_map.
+    DATA lv_read TYPE string.
+    IF iv_read = abap_true.
+        lv_read = 'true'.
+    ELSE.
+        lv_read = 'false'.
+    ENDIF.
+    DATA(itemPath) = |{ me->orgid }/_apis/git/repositories/{ me->repoid }/items?path={ iv_itempath }&includeContent={ lv_read }&versionDescriptor.version={ iv_branch }&versionDescriptor.versionType=branch&api-version=7.1-preview.1|.
+    DATA lv_status TYPE i.
+    ev_content = ''.
+    me->HTTP_GET_JSON(
+        EXPORTING
+            iv_path = itemPath
+            iv_username = me->username
+            iv_pat = me->pat
+            iv_log = iv_read
+        IMPORTING
+            ev_status = lv_status
+            et_entry_map = lt_ret_data
+             ).
+    rv_success = abap_true.
+    IF lv_status < 200 OR lv_status >= 300.
+        IF iv_read = abap_true.
+            me->write_telemetry( iv_message = |GET_ITEM_ADO fails to get item content from Git for branch { iv_branch }, path { iv_itempath }| ).
+        ENDIF.
+        rv_success = abap_false.
+        EXIT.
+    ENDIF.
+    IF iv_read = abap_true.
+        ev_content = lt_ret_data[ name = 'content' ]-value.
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD GET_TRS.
+
+    IF iv_fromtrid IS SUPPLIED.
+        " fetch TRs later than given released TR (workbench or customizing)
+        DATA lv_dat TYPE d.
+        DATA lv_tim TYPE t.
+        SELECT SINGLE as4date INTO lv_dat FROM e070 WHERE trkorr = iv_fromtrid.
+        SELECT SINGLE as4time INTO lv_tim FROM e070 WHERE trkorr = iv_fromtrid.
+        SELECT trkorr, as4user, as4date, as4time INTO TABLE @et_trids FROM e070
+            WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R' AND ( as4date > @lv_dat OR ( as4date = @lv_dat AND as4time > @lv_tim ) )
+            ORDER BY as4date ASCENDING, as4time ASCENDING.
+    ELSE.
+        " fetch latest released TR (workbench or customizing)
+        SELECT trkorr, as4user, as4date, as4time FROM e070 INTO TABLE @et_trids UP TO 1 ROWS
+            WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R'
+            ORDER BY as4date DESCENDING, as4time DESCENDING.
+    ENDIF.
+
+  ENDMETHOD.
+
+
+  METHOD GET_TRS_DATERANGE.
+
+    SELECT trkorr, as4user, as4date, as4time INTO TABLE @et_trids FROM e070
+        WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R' AND as4date >= @iv_fromdat AND as4date <= @iv_todat
+        ORDER BY as4date ASCENDING, as4time ASCENDING.
+
+  ENDMETHOD.
+
+
+  METHOD GET_WBTRS.
+
+    SELECT trkorr INTO TABLE @et_trids FROM e070
+        WHERE trfunction = 'K' AND trstatus = 'R'
+            AND ( as4date > @iv_fromdat OR ( as4date = @iv_fromdat AND as4time >= @iv_fromtim ) )
+        ORDER BY as4date ASCENDING, as4time ASCENDING.
+
+  ENDMETHOD.
+
+
   METHOD HTTP_GET.
     io_rest_client->if_rest_resource~get( ).
     DATA(lo_response) = io_rest_client->if_rest_client~get_response_entity( ).
@@ -797,20 +682,13 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     ev_response = lo_response->get_string_data( ).
   ENDMETHOD.
 
-  METHOD HTTP_POST.
-    ii_request->set_string_data( iv_body ).
-    io_rest_client->if_rest_resource~post( ii_request ).
-    DATA(lo_response) = io_rest_client->if_rest_client~get_response_entity( ).
-    ev_status = lo_response->get_header_field( '~status_code' ).
-    ev_response = lo_response->get_string_data( ).
-  ENDMETHOD.
 
   METHOD HTTP_GET_JSON.
 
     DATA li_http_client TYPE REF TO if_http_client.
     DATA lo_rest_client TYPE REF TO cl_rest_http_client.
     DATA li_request TYPE REF TO IF_REST_ENTITY.
-    DATA(lv_url) = |{ c_host }{ iv_path }|.
+    DATA(lv_url) = |{ iv_host }{ iv_path }|.
     DATA lv_status TYPE string.
     DATA lv_response TYPE string.
     DATA lo_parse TYPE REF TO /ui5/cl_json_parser.
@@ -860,6 +738,16 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     ENDIF.
 
   ENDMETHOD.
+
+
+  METHOD HTTP_POST.
+    ii_request->set_string_data( iv_body ).
+    io_rest_client->if_rest_resource~post( ii_request ).
+    DATA(lo_response) = io_rest_client->if_rest_client~get_response_entity( ).
+    ev_status = lo_response->get_header_field( '~status_code' ).
+    ev_response = lo_response->get_string_data( ).
+  ENDMETHOD.
+
 
   METHOD HTTP_POST_JSON.
 
@@ -922,6 +810,250 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
   ENDMETHOD.
 
+
+  METHOD LOAD_SYNC_STATUS.
+    TRY.
+        DATA lo_parse TYPE REF TO /ui5/cl_json_parser.
+        CREATE OBJECT lo_parse.
+        lo_parse->parse( json = iv_filecontent ).
+        DATA(lt_ret_data) = lo_parse->m_entries.
+        ev_sync_status-trid = lt_ret_data[ name = 'trid' ]-value.
+        ev_sync_status-mode = lt_ret_data[ name = 'mode' ]-value.
+        ev_sync_status-updatedate = lt_ret_data[ name = 'updatedate' ]-value.
+        ev_sync_status-updatetime = lt_ret_data[ name = 'updatetime' ]-value.
+        rv_success = abap_true.
+    CATCH /ui5/CX_VFS_ERROR.
+        rv_success = abap_false.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD GET_DISPLAYNAME_ADO.
+    " https://learn.microsoft.com/en-us/rest/api/azure/devops/ims/identities/read-identities?view=azure-devops-rest-7.1&tabs=HTTP
+    DATA lt_ret_data TYPE /ui5/cl_json_parser=>t_entry_map.
+    DATA(idPath) = |{ me->orgid }/_apis/identities?searchFilter=General&filterValue={ iv_user }@{ iv_domain }&queryMembership=None&api-version=7.1-preview.1|.
+    DATA lv_status TYPE i.
+    ev_name = ''.
+    me->HTTP_GET_JSON(
+        EXPORTING
+            iv_host = c_hostid
+            iv_path = idPath
+            iv_username = me->username
+            iv_pat = me->pat
+            iv_log = abap_true
+        IMPORTING
+            ev_status = lv_status
+            et_entry_map = lt_ret_data
+             ).
+    rv_success = abap_true.
+    IF lv_status < 200 OR lv_status >= 300.
+        me->write_telemetry( iv_message = |GET_DISPLAYNAME_ADO fails to get ID display name from user { iv_user } domain { iv_domain } status { lv_status }| ).
+        rv_success = abap_false.
+        EXIT.
+    ENDIF.
+    IF lt_ret_data[ name = 'count' ]-value <> '1'.
+        me->write_telemetry( iv_message = |GET_DISPLAYNAME_ADO fails to get ID display name from user { iv_user } domain { iv_domain }| ).
+        rv_success = abap_false.
+        EXIT.
+    ENDIF.
+    ev_name = lt_ret_data[ name = 'providerDisplayName' parent = '/value/1' ]-value.
+  ENDMETHOD.
+
+  METHOD PUSH_ADO.
+    " https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pushes/create?view=azure-devops-rest-7.1&tabs=HTTP
+    DATA(lv_branch) = |{ c_head }{ iv_branch }|.
+    DATA(createPushPath) = |{ me->orgid }/_apis/git/repositories/{ me->repoid }/pushes?api-version=7.1-preview.2|.
+    DATA lv_json_req TYPE ts_push_json_req.
+    DATA lv_status TYPE i.
+    DATA lt_ret_data TYPE /ui5/cl_json_parser=>t_entry_map.
+    APPEND iv_commit TO lv_json_req-commits.
+    APPEND VALUE ts_refupdate( name = lv_branch oldObjectId = iv_commitid ) TO lv_json_req-refUpdates.
+    me->HTTP_POST_JSON(
+        EXPORTING
+            iv_path = createPushPath
+            iv_username = me->username
+            iv_pat = me->pat
+            iv_json = lv_json_req
+        IMPORTING
+            ev_status = lv_status
+            et_entry_map = lt_ret_data
+             ).
+    rv_success = abap_true.
+    IF lv_status < 200 OR lv_status >= 300.
+        me->write_telemetry( iv_message = |PUSH_ADO fails to push to Git { lv_status } for branch { lv_branch } on top of commit { iv_commitid }| ).
+        rv_success = abap_false.
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD PUSH_TR_COMMIT_OBJECTS.
+
+    DATA lv_commit_object TYPE ZCL_UTILITY_ABAPTOGIT_TR=>ts_commit_object.
+    DATA lv_commit TYPE ts_commit.
+    DATA lv_commitid TYPE string.
+    DATA lv_displayname TYPE string.
+    DATA lv_changetype TYPE i.
+    DATA lv_syncfilecontent TYPE string.
+    DATA lv_rootfolder TYPE string.
+    DATA lv_synccnt TYPE i.
+    DATA lv_success TYPE string.
+
+    lv_rootfolder = iv_rootfolder.
+    TRANSLATE lv_rootfolder TO UPPER CASE.
+
+    " fetch the head commit ID for given branch
+    rv_success = me->get_commit_ado(
+        EXPORTING
+            iv_branch = iv_branch
+        IMPORTING
+            ev_commitid = lv_commitid
+             ).
+    CHECK rv_success = abap_true.
+
+    " construct commit object list payload for push ADO REST call
+    LOOP AT it_commit_objects INTO lv_commit_object.
+
+        " change type for add/edit/delete
+        IF lv_commit_object-delflag <> ' '.
+            lv_changetype = 16.
+        ELSEIF lv_commit_object-verno > 1.
+            lv_changetype = 2.
+        ELSE.
+            lv_changetype = 1.
+        ENDIF.
+
+        DATA(lv_code_name) = build_code_name(
+            EXPORTING
+                iv_commit_object = lv_commit_object
+                iv_local_folder = abap_false
+                iv_folder_structure = iv_folder_structure
+                 ).
+        DATA(lv_filepath) = |{ lv_rootfolder }{ lv_commit_object-devclass }{ c_delimgit }{ lv_code_name }|.
+
+        " config change delta/full file may exist
+        IF lv_commit_object-objtype = 'CDAT'.
+            lv_success = me->get_item_ado(
+                EXPORTING
+                    iv_branch = iv_branch
+                    iv_itempath = lv_filepath
+                    iv_read = abap_false
+                     ).
+            IF lv_success = abap_true.
+                lv_changetype = 2.
+            ELSE.
+                lv_changetype = 1.
+            ENDIF.
+        ENDIF.
+
+        " add the ABAP object change to the changes section of the payload
+        me->build_push_json(
+            EXPORTING
+                iv_filename = lv_filepath
+                iv_filecontent = lv_commit_object-filecontent
+                iv_changetype = lv_changetype
+            CHANGING
+                iv_commit = lv_commit
+             ).
+
+        lv_synccnt = lv_synccnt + 1.
+
+    ENDLOOP.
+
+    IF ev_synccnt IS SUPPLIED.
+        ev_synccnt = lv_synccnt.
+    ENDIF.
+
+    IF lv_synccnt = 0.
+        rv_success = abap_true.
+        EXIT.
+    ENDIF.
+
+    " update sync status file with the TR id
+    build_sync_status(
+        EXPORTING
+            iv_mode = ZCL_UTILITY_ABAPTOGIT_TR=>c_latest_version
+            iv_trid = iv_trid
+        IMPORTING
+            ev_filecontent = lv_syncfilecontent
+             ).
+    DATA(lv_syncstatuspath) = |{ lv_rootfolder }{ c_sync_status_file }|.
+    me->build_push_json(
+        EXPORTING
+            iv_filename = lv_syncstatuspath
+            iv_filecontent = lv_syncfilecontent
+            iv_changetype = 2
+        CHANGING
+            iv_commit = lv_commit
+             ).
+
+    lv_commit-comment = iv_comment.
+
+    " specify real author of the commit if needed
+    IF iv_user <> '' AND iv_domain <> ''.
+        rv_success = me->get_displayname_ado(
+            EXPORTING
+                iv_user = iv_user
+                iv_domain = iv_domain
+            IMPORTING
+                ev_name = lv_displayname
+             ).
+        CHECK rv_success = abap_true.
+        lv_commit-author-email = |{ iv_user }@{ iv_domain }|.
+        lv_commit-author-name = lv_displayname.
+    ENDIF.
+
+    me->write_telemetry( iv_message = |{ lv_synccnt } objects to push for TR { iv_trid }| iv_kind = 'info' ).
+
+    " push the changes to Git by ADO REST call
+    rv_success = me->push_ado(
+        EXPORTING
+            iv_branch = iv_branch
+            iv_commit = lv_commit
+            iv_commitid = lv_commitid
+             ).
+
+  ENDMETHOD.
+
+
+  METHOD SAVE_SYNC_STATUS.
+
+    DATA lv_json TYPE string.
+    DATA lt_filecontent TYPE TABLE OF string.
+
+    IF iv_trid IS SUPPLIED.
+        build_sync_status(
+            EXPORTING
+                iv_mode = iv_mode
+                iv_trid = iv_trid
+            IMPORTING
+                ev_filecontent = lv_json
+                 ).
+    ELSE.
+        build_sync_status(
+            EXPORTING
+                iv_mode = iv_mode
+            IMPORTING
+                ev_filecontent = lv_json
+                 ).
+    ENDIF.
+
+    APPEND lv_json TO lt_filecontent.
+    CALL FUNCTION 'GUI_DOWNLOAD'
+          EXPORTING
+            filename = iv_file
+            filetype = 'ASC'
+            write_field_separator = 'X'
+          TABLES
+            data_tab = lt_filecontent
+          EXCEPTIONS
+            OTHERS = 1.
+    rv_success = abap_true.
+    IF sy-subrc <> 0.
+        rv_success = abap_false.
+    ENDIF.
+
+  ENDMETHOD.
+
+
   METHOD WRITE_TELEMETRY.
     IF me->oref_telemetry IS NOT INITIAL AND me->method_name_telemetry IS NOT INITIAL.
         DATA(oref) = me->oref_telemetry.
@@ -934,5 +1066,4 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
         WRITE / |{ iv_kind }: { iv_message }|.
     ENDIF.
   ENDMETHOD.
-
 ENDCLASS.
