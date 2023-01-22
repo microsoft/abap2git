@@ -437,21 +437,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             ENDIF.
         ENDIF.
 
-    ELSEIF iv_commit_object-objtype = 'CDAT'.
-
-        " config change named as <table name>.<full|delta>.txt
-        IF iv_folder_structure = c_folder_structure_flat.
-            rv_name = |{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
-        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
-            IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }{ c_delim }{ iv_commit_object-devclass }{ c_delim }{ iv_commit_object-progcls }|.
-                rv_name = |{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
-            ELSE.
-                rv_name = |{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
-            ENDIF.
-        ENDIF.
-
-    ELSE.
+    ELSEIF iv_commit_object-objtype = 'PROG'
+        OR iv_commit_object-objtype = 'CLAS'
+        OR iv_commit_object-objtype = 'INTF'
+        OR iv_commit_object-objtype = 'REPS'.
 
         " others named as <object name>.<object type, PROG|CLAS|INTF|...>.abap, following abapGit
         IF iv_folder_structure = c_folder_structure_flat.
@@ -475,6 +464,20 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
                 rv_name = |Source Code Library{ c_delim }{ lv_type }{ c_delim }{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
             ELSE.
                 rv_name = |Source Code Library{ c_delimgit }{ lv_type }{ c_delimgit }{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
+            ENDIF.
+        ENDIF.
+
+    ELSE.
+
+        " config change named as <table name>.<full|delta>.txt
+        IF iv_folder_structure = c_folder_structure_flat.
+            rv_name = |{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }{ c_delim }{ iv_commit_object-devclass }{ c_delim }{ iv_commit_object-progcls }|.
+                rv_name = |{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
+            ELSE.
+                rv_name = |{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
             ENDIF.
         ENDIF.
 
@@ -593,7 +596,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     IF lv_status < 200 OR lv_status >= 300.
         me->write_telemetry( iv_message = |GET_COMMIT_ADO fails to get commit from Git for branch { iv_branch }| ).
         rv_success = abap_false.
-        EXIT.
+        RETURN.
     ENDIF.
     ev_commitId = lt_ret_data[ name = 'commitId' parent = '/value/1' ]-value.
   ENDMETHOD.
@@ -627,10 +630,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             me->write_telemetry( iv_message = |GET_ITEM_ADO fails to get item content from Git for branch { iv_branch }, path { iv_itempath }| ).
         ENDIF.
         rv_success = abap_false.
-        EXIT.
+        RETURN.
     ENDIF.
     IF iv_read = abap_true.
-        ev_content = lt_ret_data[ name = 'content' ]-value.
+        ev_content = lt_ret_data[ name = 'content' ]-value. "#EC CI_SORTSEQ
     ENDIF.
   ENDMETHOD.
 
@@ -726,9 +729,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
     IF lv_statuscode < 200 OR lv_statuscode >= 300.
         IF iv_log = abap_true.
-            me->write_telemetry( iv_message = |HTTP_GET_JSON HTTP GET status code { lv_status } for { lv_url }, response { lv_response }| ).
+            me->write_telemetry( iv_message = |HTTP_GET_JSON HTTP GET status code { lv_status } for { lv_url }| ).
+            me->write_telemetry( iv_message = |response { lv_response }| ).
         ENDIF.
-        EXIT.
+        RETURN.
     ENDIF.
 
     IF et_entry_map IS SUPPLIED.
@@ -797,15 +801,15 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
         CLEAR et_entry_map.
     ENDIF.
 
-    IF lv_statuscode < 200 OR lv_statuscode >= 300.
-        me->write_telemetry( iv_message = |HTTP_POST_JSON HTTP POST status code { lv_status } for { lv_url }, response { lv_response }| ).
-        EXIT.
-    ENDIF.
-
     IF et_entry_map IS SUPPLIED.
         CREATE OBJECT lo_parse.
         lo_parse->parse( json = lv_response ).
         et_entry_map = lo_parse->m_entries.
+    ENDIF.
+
+    IF lv_statuscode < 200 OR lv_statuscode >= 300.
+        me->write_telemetry( iv_message = |HTTP_POST_JSON HTTP POST status code { lv_status } for { lv_url }| ).
+        me->write_telemetry( iv_message = |response { lv_response }| ).
     ENDIF.
 
   ENDMETHOD.
@@ -817,10 +821,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
         CREATE OBJECT lo_parse.
         lo_parse->parse( json = iv_filecontent ).
         DATA(lt_ret_data) = lo_parse->m_entries.
-        ev_sync_status-trid = lt_ret_data[ name = 'trid' ]-value.
-        ev_sync_status-mode = lt_ret_data[ name = 'mode' ]-value.
-        ev_sync_status-updatedate = lt_ret_data[ name = 'updatedate' ]-value.
-        ev_sync_status-updatetime = lt_ret_data[ name = 'updatetime' ]-value.
+        ev_sync_status-trid = lt_ret_data[ name = 'trid' ]-value.   "#EC CI_SORTSEQ
+        ev_sync_status-mode = lt_ret_data[ name = 'mode' ]-value.   "#EC CI_SORTSEQ
+        ev_sync_status-updatedate = lt_ret_data[ name = 'updatedate' ]-value.   "#EC CI_SORTSEQ
+        ev_sync_status-updatetime = lt_ret_data[ name = 'updatetime' ]-value.   "#EC CI_SORTSEQ
         rv_success = abap_true.
     CATCH /ui5/CX_VFS_ERROR.
         rv_success = abap_false.
@@ -848,14 +852,14 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     IF lv_status < 200 OR lv_status >= 300.
         me->write_telemetry( iv_message = |GET_DISPLAYNAME_ADO fails to get ID display name from user { iv_user } domain { iv_domain } status { lv_status }| ).
         rv_success = abap_false.
-        EXIT.
+        RETURN.
     ENDIF.
-    IF lt_ret_data[ name = 'count' ]-value <> '1'.
+    IF lt_ret_data[ name = 'count' ]-value <> '1'.  "#EC CI_SORTSEQ
         me->write_telemetry( iv_message = |GET_DISPLAYNAME_ADO fails to get ID display name from user { iv_user } domain { iv_domain }| ).
         rv_success = abap_false.
-        EXIT.
+        RETURN.
     ENDIF.
-    ev_name = lt_ret_data[ name = 'providerDisplayName' parent = '/value/1' ]-value.
+    ev_name = lt_ret_data[ name = 'providerDisplayName' parent = '/value/1' ]-value.    "#EC CI_SORTSEQ
   ENDMETHOD.
 
   METHOD PUSH_ADO.
@@ -900,15 +904,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     lv_rootfolder = iv_rootfolder.
     TRANSLATE lv_rootfolder TO UPPER CASE.
 
-    " fetch the head commit ID for given branch
-    rv_success = me->get_commit_ado(
-        EXPORTING
-            iv_branch = iv_branch
-        IMPORTING
-            ev_commitid = lv_commitid
-             ).
-    CHECK rv_success = abap_true.
-
     " construct commit object list payload for push ADO REST call
     LOOP AT it_commit_objects INTO lv_commit_object.
 
@@ -930,18 +925,16 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
         DATA(lv_filepath) = |{ lv_rootfolder }{ lv_commit_object-devclass }{ c_delimgit }{ lv_code_name }|.
 
         " config change delta/full file may exist
-        IF lv_commit_object-objtype = 'CDAT'.
-            lv_success = me->get_item_ado(
-                EXPORTING
-                    iv_branch = iv_branch
-                    iv_itempath = lv_filepath
-                    iv_read = abap_false
-                     ).
-            IF lv_success = abap_true.
-                lv_changetype = 2.
-            ELSE.
-                lv_changetype = 1.
-            ENDIF.
+        lv_success = me->get_item_ado(
+            EXPORTING
+                iv_branch = iv_branch
+                iv_itempath = lv_filepath
+                iv_read = abap_false
+                 ).
+        IF lv_success = abap_true.
+            lv_changetype = 2.
+        ELSE.
+            lv_changetype = 1.
         ENDIF.
 
         " add the ABAP object change to the changes section of the payload
@@ -964,7 +957,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
     IF lv_synccnt = 0.
         rv_success = abap_true.
-        EXIT.
+        RETURN.
     ENDIF.
 
     " update sync status file with the TR id
@@ -976,11 +969,25 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             ev_filecontent = lv_syncfilecontent
              ).
     DATA(lv_syncstatuspath) = |{ lv_rootfolder }{ c_sync_status_file }|.
+
+    " sync status file may not exist
+    lv_success = me->get_item_ado(
+        EXPORTING
+            iv_branch = iv_branch
+            iv_itempath = lv_syncstatuspath
+            iv_read = abap_false
+             ).
+    IF lv_success = abap_true.
+        lv_changetype = 2.
+    ELSE.
+        lv_changetype = 1.
+    ENDIF.
+
     me->build_push_json(
         EXPORTING
             iv_filename = lv_syncstatuspath
             iv_filecontent = lv_syncfilecontent
-            iv_changetype = 2
+            iv_changetype = lv_changetype
         CHANGING
             iv_commit = lv_commit
              ).
@@ -996,12 +1003,24 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             IMPORTING
                 ev_name = lv_displayname
              ).
-        CHECK rv_success = abap_true.
         lv_commit-author-email = |{ iv_user }@{ iv_domain }|.
-        lv_commit-author-name = lv_displayname.
+        IF rv_success = abap_true.
+            lv_commit-author-name = lv_displayname.
+        ELSE.
+            lv_commit-author-name = iv_user.
+        ENDIF.
     ENDIF.
 
     me->write_telemetry( iv_message = |{ lv_synccnt } objects to push for TR { iv_trid }| iv_kind = 'info' ).
+
+    " fetch the head commit ID for given branch
+    rv_success = me->get_commit_ado(
+        EXPORTING
+            iv_branch = iv_branch
+        IMPORTING
+            ev_commitid = lv_commitid
+             ).
+    CHECK rv_success = abap_true.
 
     " push the changes to Git by ADO REST call
     rv_success = me->push_ado(
