@@ -1084,5 +1084,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     ELSE.
         WRITE / |{ iv_kind }: { iv_message }|.
     ENDIF.
-  ENDMETHOD.
+  ENDMETHOD.  
+  
 ENDCLASS.

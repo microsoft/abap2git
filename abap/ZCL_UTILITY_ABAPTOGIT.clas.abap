@@ -430,7 +430,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             lv_insertions = lv_insertions + wa_co-insertions.
             lv_deletions = lv_deletions + wa_co-deletions.
             lv_tables = lv_tables + wa_co-tables.
-            lv_rows = lv_rows + wa_co-rows - 1.
+            IF wa_co-rows > 0.
+                lv_rows = lv_rows + wa_co-rows - 1.
+            ENDIF.
         ENDLOOP.
         DATA(lv_date) = |{ wa_trid-dat+4(2) }/{ wa_trid-dat+6(2) }/{ wa_trid-dat(4) }|.
         DATA(lv_time) = |{ wa_trid-tim(2) }:{ wa_trid-tim+2(2) }:{ wa_trid-tim+4(2) }|.

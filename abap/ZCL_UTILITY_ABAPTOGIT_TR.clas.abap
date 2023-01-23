@@ -639,7 +639,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     SPLIT iv_packagenames AT ',' INTO TABLE lt_packagenames.
 
     " process objects in the TR
-    LOOP AT ld_cs_request-objects ASSIGNING <fs_cs_request_object> WHERE object <> 'RELE'.
+    LOOP AT ld_cs_request-objects ASSIGNING <fs_cs_request_object> WHERE pgmid <> 'CORR'.
 
         DATA(lv_objname) = <fs_cs_request_object>-obj_name.
         DATA(lv_objtype) = <fs_cs_request_object>-object.
@@ -720,6 +720,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
         IF lv_objtype = 'CINC'
             OR lv_objtype = 'CLSD'
+            OR lv_objtype = 'CLAS'
             OR lv_objtype = 'CPUB'
             OR lv_objtype = 'CPRO'
             OR lv_objtype = 'CPRI'
