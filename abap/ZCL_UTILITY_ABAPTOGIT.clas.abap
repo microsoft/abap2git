@@ -179,6 +179,7 @@ PRIVATE SECTION.
             obj_type    TYPE trobjtype,
             obj_type2   TYPE trobjtype,
             fugr_name   TYPE sobj_name,
+            devclass    TYPE devclass,
            END OF ts_code_object.
 
     " helper objects for ADO and TR operations
@@ -531,6 +532,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                     dirname = lv_folder
                 EXCEPTIONS
                     OTHERS = 1. "#EC FB_RC
+            IF sy-subrc <> 0.
+                me->write_telemetry( iv_message = |fail to create folder { lv_folder }| ).
+            ENDIF.
         ENDIF.
         lv_path = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }{ c_delim }{ lv_code_name }|.
         CALL FUNCTION 'GUI_DOWNLOAD'
@@ -587,6 +591,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                     dirname = lv_folder
                 EXCEPTIONS
                     OTHERS = 1. "#EC FB_RC
+            IF sy-subrc <> 0.
+                me->write_telemetry( iv_message = |fail to create folder { lv_folder }| ).
+            ENDIF.
         ENDIF.
         lv_path = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }{ c_delim }{ lv_code_name }|.
         CALL FUNCTION 'GUI_DOWNLOAD'
@@ -610,6 +617,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
   METHOD GET_PACKAGE_CODES.
 
     DATA wacode TYPE ts_code_object.
+    DATA lv_subpackage TYPE devclass.
     DATA lt_codes TYPE STANDARD TABLE OF ts_code_object.
     DATA lt_fmcodes TYPE STANDARD TABLE OF ts_code_object.
     DATA lt_fgfmcodes TYPE STANDARD TABLE OF ts_code_object.
@@ -619,6 +627,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lv_objtype2 TYPE versobjtyp.
     DATA lv_fugrname TYPE versobjnam.
     DATA lv_basefolder TYPE string.
+    DATA lt_subpackages TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_package.
     DATA lt_filecontent TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_abaptext.
     DATA lv_filecontent TYPE string.
     DATA lt_tclsfilecontent TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_abaptext.
@@ -657,12 +666,23 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         EXPORTING
             dirname = lv_folder
         EXCEPTIONS
-            FAILED = 1.
+            OTHERS = 1.
     IF sy-subrc <> 0.
-        me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to create folder { lv_folder }| ).
+        me->write_telemetry( iv_message = |fails to create folder { lv_folder }| ).
     ENDIF.
 
-    SELECT obj_name, object, object, ' ' INTO TABLE @lt_codes FROM tadir WHERE devclass = @iv_package AND pgmid = 'R3TR'.   "#EC CI_SGLSELECT
+    " find all sub packages including the package to filter in
+    me->oref_tr->get_subpackages(
+        EXPORTING
+            iv_package = iv_package
+        IMPORTING
+            et_packages = lt_subpackages
+             ).
+
+    LOOP AT lt_subpackages INTO lv_subpackage.
+        SELECT obj_name, object, object, ' ', @lv_subpackage APPENDING TABLE @lt_codes FROM tadir
+            WHERE devclass = @lv_subpackage AND pgmid = 'R3TR'.   "#EC CI_SGLSELECT
+    ENDLOOP.
 
     " collect FMs/includes in function groups into list of code objects to download
     LOOP AT lt_codes INTO wacode.
@@ -809,8 +829,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                     dirname = lv_folder
                 EXCEPTIONS
                     OTHERS = 1. "#EC FB_RC
+            IF sy-subrc <> 0.
+                me->write_telemetry( iv_message = |fail to create folder { lv_folder }| ).
+            ENDIF.
         ENDIF.
-        lv_path = |{ lv_basefolder }{ iv_package }{ c_delim }{ lv_code_name }|.
+        lv_path = |{ lv_basefolder }{ lv_subpackage }{ c_delim }{ lv_code_name }|.
         CALL FUNCTION 'GUI_DOWNLOAD'
             EXPORTING
                 filename = lv_path
@@ -847,8 +870,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                         dirname = lv_folder
                     EXCEPTIONS
                         OTHERS = 1. "#EC FB_RC
+                IF sy-subrc <> 0.
+                    me->write_telemetry( iv_message = |fail to create folder { lv_folder }| ).
+                ENDIF.
             ENDIF.
-            lv_path = |{ lv_basefolder }{ iv_package }{ c_delim }{ lv_code_name }|.
+            lv_path = |{ lv_basefolder }{ lv_subpackage }{ c_delim }{ lv_code_name }|.
             CALL FUNCTION 'GUI_DOWNLOAD'
                 EXPORTING
                     filename = lv_path

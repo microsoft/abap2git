@@ -64,6 +64,9 @@ PUBLIC SECTION.
            END OF ts_fugr_devclass.
     TYPES: tty_fugr_devclass TYPE TABLE OF ts_fugr_devclass.
 
+    " package list
+    TYPES: tty_package TYPE TABLE OF string.
+
     " constructor
     " io_objtelemetry - class object for telemetry
     " iv_methtelemetry - method name for telemetry
@@ -185,6 +188,24 @@ PUBLIC SECTION.
             iv_pcrname      TYPE string
         EXPORTING
             et_filecontent  TYPE tty_abaptext.
+
+    " find all hierarchical parent packages of a package
+    " iv_package - package name as subpackage
+    " et_packages - package list of parent packages including iv_package
+    METHODS get_parentpackages
+        IMPORTING
+            iv_package  TYPE string
+        EXPORTING
+            et_packages TYPE tty_package.
+
+    " find all hierarchical sub packages of a package
+    " iv_package - package name as root package
+    " et_packages - package list of sub packages including iv_package
+    METHODS get_subpackages
+        IMPORTING
+            iv_package  TYPE devclass
+        EXPORTING
+            et_packages TYPE tty_package.
 
 PROTECTED SECTION.
 
@@ -560,6 +581,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lv_classkey TYPE SEOCLSKEY.
     DATA lv_classname TYPE tadir-obj_name.
     DATA lv_haspackage TYPE abap_bool.
+    DATA lt_parentpackages TYPE tty_package.
+    DATA lv_foundparentpackage TYPE abap_bool.
     DATA lt_objname_parts TYPE TABLE OF string.
     DATA lt_classes TYPE TABLE OF string.
     DATA lt_fugrs TYPE TABLE OF ts_fugr_devclass.
@@ -879,8 +902,22 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             CONTINUE.
         ENDIF.
 
-        " is the object in one of the packages specified?
-        CHECK line_exists( lt_packagenames[ table_line = lv_devclass ] ).
+        " is the object in (sub package of) one of the packages specified?
+        CLEAR lt_parentpackages.
+        me->get_parentpackages(
+            EXPORTING
+                iv_package = lv_devclass
+            IMPORTING
+                et_packages = lt_parentpackages
+                 ).
+        lv_foundparentpackage = abap_false.
+        LOOP AT lt_parentpackages INTO DATA(waparentpackage).
+            IF line_exists( lt_packagenames[ table_line = waparentpackage ] ).
+                lv_foundparentpackage = abap_true.
+                EXIT.
+            ENDIF.
+        ENDLOOP.
+        CHECK lv_foundparentpackage = abap_true.
 
         " is there any version found?
         CHECK lv_version_no > 0.
@@ -1540,6 +1577,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             ENDTRY.
         WHEN 'BADI_IMPL'.
             " BAdI case has no code to produce
+            RETURN.
         WHEN 'HOOK_IMPL'.
             TRY.
                 CALL METHOD r_vers->if_enh_object~get_data
@@ -1558,6 +1596,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             CATCH CX_ENH_NO_VALID_INPUT_TYPE .
                 RETURN.
             ENDTRY.
+        WHEN OTHERS.
+            RETURN.
     ENDCASE.
 
   ENDMETHOD.
@@ -1877,6 +1917,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                     ENDIF.
                 WHEN 'ENDIF' OR 'EINI' OR 'EEND' OR 'EDAY' OR 'LPEND'.
                     lv_indent = lv_indent - 2.
+                WHEN OTHERS.
+                    " no action
             ENDCASE.
         ENDSELECT.
 
@@ -2321,6 +2363,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             archive_access_error = 1
             no_archives_found    = 2
             OTHERS               = 3.
+    CHECK sy-subrc = 0.
 
     lv_tabname = iv_tabname.
     rv_success = me->get_table_schema(
@@ -3277,6 +3320,39 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD GET_PARENTPACKAGES.
+
+    DATA lv_parentcl TYPE parentcl.
+    DATA lv_childcl TYPE devclass.
+    lv_childcl = iv_package.
+    WHILE lv_childcl IS NOT INITIAL.
+        SELECT SINGLE parentcl FROM tdevc INTO lv_parentcl WHERE devclass = lv_childcl.
+        APPEND lv_childcl TO et_packages.
+        lv_childcl = lv_parentcl.
+    ENDWHILE.
+
+  ENDMETHOD.
+
+
+  METHOD GET_SUBPACKAGES.
+
+    " breath first search for sub packages of each package
+    DATA lt_queue TYPE tty_package.
+    DATA lt_children TYPE tty_package.
+    DATA lv_current TYPE devclass.
+    APPEND iv_package TO lt_queue.
+    WHILE lines( lt_queue ) > 0.
+        lv_current = lt_queue[ 1 ].
+        CLEAR lt_children.
+        SELECT devclass FROM tdevc INTO TABLE @lt_children WHERE parentcl = @lv_current.
+        APPEND LINES OF lt_children TO lt_queue.
+        APPEND lv_current TO et_packages.
+        DELETE lt_queue FROM 1.
+    ENDWHILE.
+
+  ENDMETHOD.
+
+
   METHOD WRITE_TELEMETRY.
     IF me->oref_telemetry IS NOT INITIAL AND me->method_name_telemetry IS NOT INITIAL.
         DATA(oref) = me->oref_telemetry.
@@ -3289,5 +3365,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         WRITE / |{ iv_kind }: { iv_message }|.
     ENDIF.
   ENDMETHOD.
+
 
 ENDCLASS.

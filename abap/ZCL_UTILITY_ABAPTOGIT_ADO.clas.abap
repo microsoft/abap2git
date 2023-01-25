@@ -556,6 +556,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             plugin_not_active  = 2
             internal_error     = 3
         OTHERS             = 4 ).
+    CHECK sy-subrc = 0.
 
     " basic auth with user name and password (personal access token) for ADO REST APIs
     DATA(lv_auth) = cl_http_utility=>encode_base64( |{ iv_username }:{ iv_pat }| ).
@@ -647,13 +648,19 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
         SELECT SINGLE as4date INTO lv_dat FROM e070 WHERE trkorr = iv_fromtrid.
         SELECT SINGLE as4time INTO lv_tim FROM e070 WHERE trkorr = iv_fromtrid.
         SELECT trkorr, as4user, as4date, as4time INTO TABLE @et_trids FROM e070
-            WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R' AND ( as4date > @lv_dat OR ( as4date = @lv_dat AND as4time > @lv_tim ) )
-            ORDER BY as4date ASCENDING, as4time ASCENDING.
+            WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R' AND ( as4date > @lv_dat OR ( as4date = @lv_dat AND as4time > @lv_tim ) ).
+        SORT et_trids BY dat tim.
     ELSE.
         " fetch latest released TR (workbench or customizing)
-        SELECT trkorr, as4user, as4date, as4time FROM e070 INTO TABLE @et_trids UP TO 1 ROWS
-            WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R'
-            ORDER BY as4date DESCENDING, as4time DESCENDING.
+        DATA maxdat TYPE d.
+        SELECT MAX( as4date ) FROM e070 INTO maxdat WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R'.
+        SELECT trkorr, as4user, as4date, as4time FROM e070 INTO TABLE @et_trids
+            WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R' AND as4date = @maxdat.
+        IF lines( et_trids ) > 1.
+            SORT et_trids BY tim DESCENDING.
+            DATA(lv_count) = lines( et_trids ).
+            DELETE et_trids FROM 2 TO lv_count.
+        ENDIF.
     ENDIF.
 
   ENDMETHOD.
@@ -662,8 +669,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
   METHOD GET_TRS_DATERANGE.
 
     SELECT trkorr, as4user, as4date, as4time INTO TABLE @et_trids FROM e070
-        WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R' AND as4date >= @iv_fromdat AND as4date <= @iv_todat
-        ORDER BY as4date ASCENDING, as4time ASCENDING.
+        WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R' AND as4date >= @iv_fromdat AND as4date <= @iv_todat.
+    SORT et_trids BY dat tim.
 
   ENDMETHOD.
 
@@ -672,8 +679,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
 
     SELECT trkorr INTO TABLE @et_trids FROM e070
         WHERE trfunction = 'K' AND trstatus = 'R'
-            AND ( as4date > @iv_fromdat OR ( as4date = @iv_fromdat AND as4time >= @iv_fromtim ) )
-        ORDER BY as4date ASCENDING, as4time ASCENDING.
+            AND ( as4date > @iv_fromdat OR ( as4date = @iv_fromdat AND as4time >= @iv_fromtim ) ).
+    SORT et_trids BY dat tim.
 
   ENDMETHOD.
 
@@ -1084,6 +1091,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
     ELSE.
         WRITE / |{ iv_kind }: { iv_message }|.
     ENDIF.
-  ENDMETHOD.  
-  
+  ENDMETHOD.
+
 ENDCLASS.
