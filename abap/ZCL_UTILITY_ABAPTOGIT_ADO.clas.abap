@@ -11,7 +11,7 @@ PUBLIC SECTION.
     " sync status file name to keep track on last sync-ed TR
     CONSTANTS:  c_sync_status_file   TYPE string VALUE '.sync_status.json'.
 
-    CONSTANTS c_delim TYPE string VALUE '\\'.
+    CONSTANTS c_delim TYPE string VALUE '\'.
     CONSTANTS c_delimgit TYPE string VALUE '/'.
 
     " payload for ADO REST API to create a push
@@ -337,7 +337,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             IF iv_commit_object-objname CP |L{ iv_commit_object-fugr }*|.
                 " include case
                 IF iv_local_folder = abap_true.
-                    ev_file_folder = |{ iv_base_folder }{ c_delim }Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes|.
+                    ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes|.
                     rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes{ c_delim }{ iv_commit_object-objname }.abap|.
                 ELSE.
                     rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ iv_commit_object-fugr }{ c_delimgit }Includes{ c_delimgit }{ iv_commit_object-objname }.abap|.
@@ -345,7 +345,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             ELSE.
                 " function module case
                 IF iv_local_folder = abap_true.
-                    ev_file_folder = |{ iv_base_folder }{ c_delim }Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Function Modules|.
+                    ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Function Modules|.
                     rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Function Modules{ c_delim }{ iv_commit_object-objname }.abap|.
                 ELSE.
                     rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ iv_commit_object-fugr }{ c_delimgit }Function Modules{ c_delimgit }{ iv_commit_object-objname }.abap|.
@@ -360,7 +360,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }{ c_delim }Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes|.
+                ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes|.
                 rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes{ c_delim }{ iv_commit_object-objname }.abap|.
             ELSE.
                 rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ iv_commit_object-fugr }{ c_delimgit }Includes{ c_delimgit }{ iv_commit_object-objname }.abap|.
@@ -374,7 +374,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-objname }.clas.testclasses.abap|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }{ c_delim }Source Code Library{ c_delim }Classes|.
+                ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Classes|.
                 rv_name = |Source Code Library{ c_delim }Classes{ c_delim }{ iv_commit_object-objname }.clas.testclasses.abap|.
             ELSE.
                 rv_name = |Source Code Library{ c_delimgit }Classes{ c_delimgit }{ iv_commit_object-objname }.clas.testclasses.abap|.
@@ -388,7 +388,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-objname }.enho.abap|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }{ c_delim }Enhancements{ c_delim }Enhancement Implementations|.
+                ev_file_folder = |{ iv_base_folder }Enhancements{ c_delim }Enhancement Implementations|.
                 rv_name = |Enhancements{ c_delim }Enhancement Implementations{ c_delim }{ iv_commit_object-objname }.enho.abap|.
             ELSE.
                 rv_name = |Enhancements{ c_delimgit }Enhancement Implementations{ c_delimgit }{ iv_commit_object-objname }.enho.abap|.
@@ -402,7 +402,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-objname }.tabl.json|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }{ c_delim }Dictionary{ c_delim }Data Tables|.
+                ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Data Tables|.
                 rv_name = |Dictionary{ c_delim }Data Tables{ c_delim }{ iv_commit_object-objname }.tabl.json|.
             ELSE.
                 rv_name = |Dictionary{ c_delimgit }Data Tables{ c_delimgit }{ iv_commit_object-objname }.tabl.json|.
@@ -416,7 +416,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-objname }.schm.txt|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }{ c_delim }Schema{ c_delim }{ iv_commit_object-progcls }|.
+                ev_file_folder = |{ iv_base_folder }Schema{ c_delim }{ iv_commit_object-progcls }|.
                 rv_name = |Schema{ c_delim }{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.schm.txt|.
             ELSE.
                 rv_name = |Schema{ c_delimgit }{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.schm.txt|.
@@ -430,7 +430,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-objname }.pcr.txt|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }{ c_delim }PCR{ c_delim }{ iv_commit_object-progcls }|.
+                ev_file_folder = |{ iv_base_folder }PCR{ c_delim }{ iv_commit_object-progcls }|.
                 rv_name = |PCR{ c_delim }{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.pcr.txt|.
             ELSE.
                 rv_name = |PCR{ c_delimgit }{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.pcr.txt|.
@@ -460,7 +460,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
                 lv_type = 'Includes'.
             ENDIF.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }{ c_delim }Source Code Library{ c_delim }{ lv_type }|.
+                ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }{ lv_type }|.
                 rv_name = |Source Code Library{ c_delim }{ lv_type }{ c_delim }{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
             ELSE.
                 rv_name = |Source Code Library{ c_delimgit }{ lv_type }{ c_delimgit }{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
@@ -474,7 +474,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             rv_name = |{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }{ c_delim }{ iv_commit_object-devclass }{ c_delim }{ iv_commit_object-progcls }|.
+                ev_file_folder = |{ iv_base_folder }{ iv_commit_object-devclass }{ c_delim }{ iv_commit_object-progcls }|.
                 rv_name = |{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.
             ELSE.
                 rv_name = |{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.{ iv_commit_object-progcls }.txt|.

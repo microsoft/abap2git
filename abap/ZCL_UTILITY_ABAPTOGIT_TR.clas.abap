@@ -3347,7 +3347,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         SELECT devclass FROM tdevc INTO TABLE @lt_children WHERE parentcl = @lv_current.
         APPEND LINES OF lt_children TO lt_queue.
         APPEND lv_current TO et_packages.
-        DELETE lt_queue FROM 1.
+        DELETE lt_queue FROM 1 TO 1.
     ENDWHILE.
 
   ENDMETHOD.

@@ -168,7 +168,7 @@ PROTECTED SECTION.
 
 PRIVATE SECTION.
 
-    CONSTANTS c_delim TYPE string VALUE '\\'.
+    CONSTANTS c_delim TYPE string VALUE '\'.
 
     " max difference in seconds for an imported TR to date time of now
     CONSTANTS c_importtr_diff_gap TYPE i VALUE 30.
@@ -533,7 +533,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 EXCEPTIONS
                     OTHERS = 1. "#EC FB_RC
             IF sy-subrc <> 0.
-                me->write_telemetry( iv_message = |fail to create folder { lv_folder }| ).
+                " folder may exist
             ENDIF.
         ENDIF.
         lv_path = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }{ c_delim }{ lv_code_name }|.
@@ -592,7 +592,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 EXCEPTIONS
                     OTHERS = 1. "#EC FB_RC
             IF sy-subrc <> 0.
-                me->write_telemetry( iv_message = |fail to create folder { lv_folder }| ).
+                " folder may exist
             ENDIF.
         ENDIF.
         lv_path = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }{ c_delim }{ lv_code_name }|.
@@ -659,18 +659,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         lv_basefolder = iv_folder.
     ENDIF.
 
-    " root folder for a package like \src\<branch name>\
-    lv_folder = |{ lv_basefolder }{ iv_package }{ c_delim }|.
-    lv_codefolder = lv_folder.
-    CALL FUNCTION 'GUI_CREATE_DIRECTORY'
-        EXPORTING
-            dirname = lv_folder
-        EXCEPTIONS
-            OTHERS = 1.
-    IF sy-subrc <> 0.
-        me->write_telemetry( iv_message = |fails to create folder { lv_folder }| ).
-    ENDIF.
-
     " find all sub packages including the package to filter in
     me->oref_tr->get_subpackages(
         EXPORTING
@@ -692,12 +680,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             " find function modules in the function group
             DATA(pname_filter) = 'SAPL' && lv_objname.
             CLEAR lt_fgfmcodes.
-            SELECT funcname, 'FUNC', 'FUNC', @lv_objname INTO TABLE @lt_fgfmcodes FROM tfdir WHERE pname = @pname_filter.   "#EC CI_SGLSELECT
+            SELECT funcname, 'FUNC', 'FUNC', @lv_objname, @wacode-devclass INTO TABLE @lt_fgfmcodes FROM tfdir WHERE pname = @pname_filter.   "#EC CI_SGLSELECT
             APPEND LINES OF lt_fgfmcodes TO lt_fmcodes.
             " find includes in the function group
             pname_filter = 'L' && lv_objname && '%'.
             CLEAR lt_fgfmcodes.
-            SELECT name, 'REPS', 'FUNC', @lv_objname INTO TABLE @lt_fgfmcodes FROM trdir WHERE name LIKE @pname_filter. "#EC CI_SGLSELECT
+            SELECT name, 'REPS', 'FUNC', @lv_objname, @wacode-devclass INTO TABLE @lt_fgfmcodes FROM trdir WHERE name LIKE @pname_filter. "#EC CI_SGLSELECT
             APPEND LINES OF lt_fgfmcodes TO lt_fmcodes.
         ENDIF.
     ENDLOOP.
@@ -812,6 +800,17 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         lv_commit_object-objtype2 = lv_objtype2.
         lv_commit_object-fugr = lv_fugrname.
         lv_commit_object-subc = lv_subc.
+        lv_commit_object-devclass = wacode-devclass.
+        lv_codefolder = |{ lv_basefolder }{ wacode-devclass }{ c_delim }|.
+        lv_folder = lv_codefolder.
+        CALL FUNCTION 'GUI_CREATE_DIRECTORY'
+            EXPORTING
+                dirname = lv_folder
+            EXCEPTIONS
+                OTHERS = 1.
+        IF sy-subrc <> 0.
+            " folder may exist
+        ENDIF.
         lv_code_name = ZCL_UTILITY_ABAPTOGIT_ADO=>build_code_name(
             EXPORTING
                 iv_commit_object = lv_commit_object
@@ -830,10 +829,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 EXCEPTIONS
                     OTHERS = 1. "#EC FB_RC
             IF sy-subrc <> 0.
-                me->write_telemetry( iv_message = |fail to create folder { lv_folder }| ).
+                " folder may exist
             ENDIF.
         ENDIF.
-        lv_path = |{ lv_basefolder }{ lv_subpackage }{ c_delim }{ lv_code_name }|.
+        lv_path = |{ lv_basefolder }{ wacode-devclass }{ c_delim }{ lv_code_name }|.
         CALL FUNCTION 'GUI_DOWNLOAD'
             EXPORTING
                 filename = lv_path
@@ -871,7 +870,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                     EXCEPTIONS
                         OTHERS = 1. "#EC FB_RC
                 IF sy-subrc <> 0.
-                    me->write_telemetry( iv_message = |fail to create folder { lv_folder }| ).
+                    " folder may exist
                 ENDIF.
             ENDIF.
             lv_path = |{ lv_basefolder }{ lv_subpackage }{ c_delim }{ lv_code_name }|.
