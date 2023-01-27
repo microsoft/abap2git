@@ -111,6 +111,7 @@ PUBLIC SECTION.
     " iv_objname - ABAP object name from table TADIR
     " iv_objtype - ABAP object type from table TADIR
     " iv_mode - active/latest version mode
+    " iv_trid - TR ID of the version matching or no later to select
     " iv_date/iv_time - date and time of versions no later than to select
     " iv_findtest - require to find test class of a product class if applicable
     " ev_version_no - count of versions selected
@@ -120,6 +121,7 @@ PUBLIC SECTION.
             iv_objname      TYPE e071-obj_name
             iv_objtype      TYPE e071-object
             iv_mode         TYPE string
+            iv_trid         TYPE trkorr OPTIONAL
             iv_date         TYPE d OPTIONAL
             iv_time         TYPE t OPTIONAL
             iv_findtest     TYPE abap_bool
@@ -161,6 +163,96 @@ PUBLIC SECTION.
         EXPORTING
             ev_filecontent      TYPE string
             et_filecontent      TYPE tty_abaptext
+        RETURNING VALUE(rv_success) TYPE string.
+
+    " get content of data element
+    " iv_objname - ABAP object name from table TADIR
+    " iv_version - object version
+    " ev_filecontent - file content
+    " et_filecontent - file content lines
+    METHODS get_dataelement_content
+        IMPORTING
+            iv_version      TYPE versno
+            iv_objname      TYPE versobjnam
+            iv_logdest      TYPE rfcdest DEFAULT ''
+         EXPORTING
+            ev_filecontent  TYPE string
+            et_filecontent  TYPE tty_abaptext
+        RETURNING VALUE(rv_success) TYPE string.
+
+    " get content of domain
+    " iv_objname - ABAP object name from table TADIR
+    " iv_version - object version
+    " ev_filecontent - file content
+    " et_filecontent - file content lines
+    METHODS get_domain_content
+        IMPORTING
+            iv_version      TYPE versno
+            iv_objname      TYPE versobjnam
+            iv_logdest      TYPE rfcdest DEFAULT ''
+         EXPORTING
+            ev_filecontent  TYPE string
+            et_filecontent  TYPE tty_abaptext
+        RETURNING VALUE(rv_success) TYPE string.
+
+    " get content of lock object
+    " iv_objname - ABAP object name from table TADIR
+    " iv_version - object version
+    " ev_filecontent - file content
+    " et_filecontent - file content lines
+    METHODS get_lockobject_content
+        IMPORTING
+            iv_version      TYPE versno
+            iv_objname      TYPE versobjnam
+            iv_logdest      TYPE rfcdest DEFAULT ''
+         EXPORTING
+            ev_filecontent  TYPE string
+            et_filecontent  TYPE tty_abaptext
+        RETURNING VALUE(rv_success) TYPE string.
+
+    " get content of search help object
+    " iv_objname - ABAP object name from table TADIR
+    " iv_version - object version
+    " ev_filecontent - file content
+    " et_filecontent - file content lines
+    METHODS get_searchhelp_content
+        IMPORTING
+            iv_version      TYPE versno
+            iv_objname      TYPE versobjnam
+            iv_logdest      TYPE rfcdest DEFAULT ''
+         EXPORTING
+            ev_filecontent  TYPE string
+            et_filecontent  TYPE tty_abaptext
+        RETURNING VALUE(rv_success) TYPE string.
+
+    " get content of table type
+    " iv_objname - ABAP object name from table TADIR
+    " iv_version - object version
+    " ev_filecontent - file content
+    " et_filecontent - file content lines
+    METHODS get_tabletype_content
+        IMPORTING
+            iv_version      TYPE versno
+            iv_objname      TYPE versobjnam
+            iv_logdest      TYPE rfcdest DEFAULT ''
+         EXPORTING
+            ev_filecontent  TYPE string
+            et_filecontent  TYPE tty_abaptext
+        RETURNING VALUE(rv_success) TYPE string.
+
+    " get content of view
+    " iv_objname - ABAP object name from table TADIR
+    " iv_version - object version
+    " ev_filecontent - file content
+    " et_filecontent - file content lines
+    METHODS get_view_content
+        IMPORTING
+            iv_version      TYPE versno
+            iv_objname      TYPE versobjnam
+            iv_logdest      TYPE rfcdest DEFAULT ''
+         EXPORTING
+            ev_filecontent  TYPE string
+            et_filecontent  TYPE tty_abaptext
         RETURNING VALUE(rv_success) TYPE string.
 
     " remark: OOB program RPDASC00 also dumps schema/PCR but takes background job privilege to run
@@ -215,6 +307,9 @@ PRIVATE SECTION.
 
     " structure for data table description
     TYPES: BEGIN OF ty_dd02v,
+            as4user TYPE string,
+            as4date TYPE string,
+            as4time TYPE string,
             tabname TYPE string,
             ddlanguage TYPE string,
             tabclass TYPE string,
@@ -243,6 +338,179 @@ PRIVATE SECTION.
             dd02v TYPE ty_dd02v,
             dd03v TYPE tty_data_table_field,
            END OF ty_data_table_desc.
+    " structure for data element description
+    TYPES: BEGIN OF ty_data_element_desc,
+            as4user TYPE string,
+            as4date TYPE string,
+            as4time TYPE string,
+            rollname TYPE string,
+            ddlanguage TYPE string,
+            domname TYPE string,
+            ddtext TYPE string,
+            datatype TYPE string,
+            leng TYPE i,
+            decimals TYPE i,
+            outputlen TYPE i,
+            headlen TYPE i,
+            scrlen1 TYPE i,
+            scrlen2 TYPE i,
+            scrlen3 TYPE i,
+            reptext TYPE string,
+            scrtext_s TYPE string,
+            scrtext_m TYPE string,
+            scrtext_l TYPE string,
+            refkind TYPE string,
+            lowercase TYPE string,
+           END OF ty_data_element_desc.
+    " structure for domain description
+    TYPES: BEGIN OF ty_domain_desc,
+            as4user TYPE string,
+            as4date TYPE string,
+            as4time TYPE string,
+            ddlanguage TYPE string,
+            domname TYPE string,
+            ddtext TYPE string,
+            datatype TYPE string,
+            leng TYPE i,
+            decimals TYPE i,
+            outputlen TYPE i,
+            entitytab TYPE string,
+           END OF ty_domain_desc.
+    " structure for table type description
+    TYPES: BEGIN OF ty_dd40v,
+            as4user TYPE string,
+            as4date TYPE string,
+            as4time TYPE string,
+            ddlanguage TYPE string,
+            typename TYPE string,
+            ddtext TYPE string,
+            datatype TYPE string,
+            rowtype TYPE string,
+            rowkind TYPE string,
+            keykind TYPE string,
+            keyfdcount TYPE i,
+            typelen TYPE i,
+            ttypkind TYPE string,
+           END OF ty_dd40v.
+    TYPES: BEGIN OF ty_dd42v,
+            seckeyname TYPE string,
+            keyfdpos TYPE i,
+            rowtypepos TYPE i,
+            keyfield TYPE string,
+           END OF ty_dd42v.
+    TYPES: BEGIN OF ty_dd43v,
+            seckeyname TYPE string,
+            ddlanguage TYPE string,
+            seckeyunique TYPE string,
+            accessmode TYPE string,
+            kind TYPE string,
+            keydescription TYPE string,
+           END OF ty_dd43v.
+    TYPES: tty_dd42v TYPE TABLE OF ty_dd42v WITH DEFAULT KEY.
+    TYPES: tty_dd43v TYPE TABLE OF ty_dd43v WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_table_type_desc,
+            dd40v TYPE ty_dd40v,
+            dd42v TYPE tty_dd42v,
+            dd43v TYPE tty_dd43v,
+           END OF ty_table_type_desc.
+    " structure for view description
+    TYPES: BEGIN OF ty_dd25v,
+            as4user TYPE string,
+            as4date TYPE string,
+            as4time TYPE string,
+            ddlanguage TYPE string,
+            viewname TYPE string,
+            ddtext TYPE string,
+            aggtype TYPE string,
+            dbrefname TYPE string,
+            viewref TYPE string,
+           END OF ty_dd25v.
+    TYPES: BEGIN OF ty_dd26v,
+            tabname TYPE string,
+            tabpos TYPE i,
+            fortabname TYPE string,
+            forfield TYPE string,
+            fordir TYPE string,
+           END OF ty_dd26v.
+    TYPES: BEGIN OF ty_dd27v,
+            viewfield TYPE string,
+            objpos TYPE i,
+            tabname TYPE string,
+            keyflag TYPE string,
+            rollname TYPE string,
+            rdonly TYPE string,
+            dbviewfield TYPE string,
+            enqmode TYPE string,
+           END OF ty_dd27v.
+    TYPES: BEGIN OF ty_dd28v,
+            condname TYPE string,
+            position TYPE i,
+            tabname TYPE string,
+            negation TYPE string,
+            operator TYPE string,
+            constants TYPE string,
+            contline TYPE string,
+            and_or TYPE string,
+            offset TYPE i,
+            flength TYPE i,
+            joperator TYPE string,
+           END OF ty_dd28v.
+    TYPES: tty_dd26v TYPE TABLE OF ty_dd26v WITH DEFAULT KEY.
+    TYPES: tty_dd27v TYPE TABLE OF ty_dd27v WITH DEFAULT KEY.
+    TYPES: tty_dd28v TYPE TABLE OF ty_dd28v WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_view_desc,
+            dd25v TYPE ty_dd25v,
+            dd26v TYPE tty_dd26v,
+            dd27v TYPE tty_dd27v,
+            dd28v TYPE tty_dd28v,
+           END OF ty_view_desc.
+    " structure for lock object description
+    TYPES: BEGIN OF ty_lock_object_desc,
+            dd25v TYPE ty_dd25v,
+            dd26v TYPE tty_dd26v,
+            dd27v TYPE tty_dd27v,
+           END OF ty_lock_object_desc.
+    " structure for search help description
+    TYPES: BEGIN OF ty_dd30v,
+            as4user TYPE string,
+            as4date TYPE string,
+            as4time TYPE string,
+            ddlanguage TYPE string,
+            shlpname TYPE string,
+            ddtext TYPE string,
+            issimple TYPE string,
+            selmethod TYPE string,
+            dialogtype TYPE string,
+           END OF ty_dd30v.
+    TYPES: BEGIN OF ty_dd31v,
+            subshlp TYPE string,
+            shposition TYPE i,
+            viashlp TYPE string,
+            hideflag TYPE string,
+           END OF ty_dd31v.
+    TYPES: BEGIN OF ty_dd32v,
+            fieldname TYPE string,
+            flposition TYPE i,
+            rollname TYPE string,
+            shlpinput TYPE string,
+            shlpoutput TYPE string,
+            shlpselpos TYPE i,
+            shlpseldis TYPE string,
+           END OF ty_dd32v.
+    TYPES: BEGIN OF ty_dd33v,
+            fieldname TYPE string,
+            subshlp TYPE string,
+            subfield TYPE string,
+           END OF ty_dd33v.
+    TYPES: tty_dd31v TYPE TABLE OF ty_dd31v WITH DEFAULT KEY.
+    TYPES: tty_dd32v TYPE TABLE OF ty_dd32v WITH DEFAULT KEY.
+    TYPES: tty_dd33v TYPE TABLE OF ty_dd33v WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_search_help_desc,
+            dd30v TYPE ty_dd30v,
+            dd31v TYPE tty_dd31v,
+            dd32v TYPE tty_dd32v,
+            dd33v TYPE tty_dd33v,
+           END OF ty_search_help_desc.
 
     " telemetry callback
     DATA oref_telemetry TYPE REF TO object.
@@ -373,6 +641,15 @@ PRIVATE SECTION.
             ev_text TYPE string
             ev_leng TYPE i.
 
+    " get versions of an ABAP object
+    METHODS get_versions
+        IMPORTING
+            iv_objname      TYPE e071-obj_name
+            iv_objtype      TYPE e071-object
+        CHANGING
+            it_vers         TYPE vrsd_tab
+        RETURNING VALUE(rv_success) TYPE string.
+
     " get TR creation timestamp
     METHODS get_tr_creation
         IMPORTING
@@ -388,6 +665,7 @@ PRIVATE SECTION.
             iv_objname      TYPE e071-obj_name
             iv_objtype      TYPE e071-object
             iv_mode         TYPE string
+            iv_trid         TYPE trkorr
             iv_date         TYPE d OPTIONAL
             iv_time         TYPE t OPTIONAL
             iv_findtest     TYPE abap_bool DEFAULT abap_true
@@ -395,26 +673,35 @@ PRIVATE SECTION.
             cht_objversions TYPE tty_version_no OPTIONAL
         RETURNING VALUE(r_version_no) TYPE i.
 
+    " helper for get versions number
+    METHODS get_versions_no_helper
+        IMPORTING
+            iv_objname      TYPE e071-obj_name
+            iv_objtype      TYPE e071-object
+            iv_mode         TYPE string
+            iv_trid         TYPE trkorr OPTIONAL
+            iv_date         TYPE d OPTIONAL
+            iv_time         TYPE t OPTIONAL
+        EXPORTING
+            ev_version_no   TYPE i
+            ev_versno       TYPE versno
+        CHANGING
+            cht_vers        TYPE vrsd_tab
+            cht_objversions TYPE tty_version_no OPTIONAL
+        RETURNING VALUE(rv_success) TYPE string.
+
     " get valued version to no later than specific time stamp if any given latest/active version mode
     METHODS get_valued_version
         IMPORTING
             iv_mode     TYPE string
-            iv_date     TYPE d OPTIONAL
-            iv_time     TYPE t OPTIONAL
+            iv_trid     TYPE trkorr OPTIONAL
+            iv_date     TYPE d
+            iv_time     TYPE t
         EXPORTING
             ev_versno   TYPE versno
             ev_verscnt  TYPE i
         CHANGING
             cht_vers    TYPE vrsd_tab
-        RETURNING VALUE(rv_success) TYPE string.
-
-    " get versions of an ABAP object
-    METHODS get_versions
-        IMPORTING
-            iv_objname      TYPE e071-obj_name
-            iv_objtype      TYPE e071-object
-        CHANGING
-            it_vers         TYPE vrsd_tab
         RETURNING VALUE(rv_success) TYPE string.
 
     " fetch delta stats of an ABAP object given two versions
@@ -837,21 +1124,45 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             ENDIF.
 
         ELSEIF lv_objtype = 'PROG' OR lv_objtype = 'INTF' OR lv_objtype = 'ENHO'.
-
             " program (include), interface, enhancement implementation case
-
             " find out which package the ABAP object belongs to
             SELECT SINGLE devclass INTO lv_devclass FROM tadir
                 WHERE object = lv_objtype AND obj_name = lv_objname.    "#EC WARNOK "#EC CI_SGLSELECT
-
         ELSEIF lv_objtype = 'TABD' OR lv_objtype = 'TABL'.
-
             " data table case
-
             " find out which package the ABAP object belongs to
             SELECT SINGLE devclass INTO lv_devclass FROM tadir
                 WHERE object = 'TABL' AND obj_name = lv_objname.    "#EC WARNOK "#EC CI_SGLSELECT
-
+        ELSEIF lv_objtype = 'DTED' OR lv_objtype = 'DTEL'.
+            " data element case
+            " find out which package the ABAP object belongs to
+            SELECT SINGLE devclass INTO lv_devclass FROM tadir
+                WHERE object = 'DTEL' AND obj_name = lv_objname.    "#EC WARNOK "#EC CI_SGLSELECT
+        ELSEIF lv_objtype = 'DOMA' OR lv_objtype = 'DOMD'.
+            " domain case
+            " find out which package the ABAP object belongs to
+            SELECT SINGLE devclass INTO lv_devclass FROM tadir
+                WHERE object = 'DOMA' AND obj_name = lv_objname.    "#EC WARNOK "#EC CI_SGLSELECT
+        ELSEIF lv_objtype = 'ENQU' OR lv_objtype = 'ENQD'.
+            " lock object case
+            " find out which package the ABAP object belongs to
+            SELECT SINGLE devclass INTO lv_devclass FROM tadir
+                WHERE object = 'ENQU' AND obj_name = lv_objname.    "#EC WARNOK "#EC CI_SGLSELECT
+        ELSEIF lv_objtype = 'SHLP' OR lv_objtype = 'SHLD'.
+            " search help type case
+            " find out which package the ABAP object belongs to
+            SELECT SINGLE devclass INTO lv_devclass FROM tadir
+                WHERE object = 'SHLP' AND obj_name = lv_objname.    "#EC WARNOK "#EC CI_SGLSELECT
+        ELSEIF lv_objtype = 'TTYP' OR lv_objtype = 'TTYD'.
+            " table type case
+            " find out which package the ABAP object belongs to
+            SELECT SINGLE devclass INTO lv_devclass FROM tadir
+                WHERE object = 'TTYP' AND obj_name = lv_objname.    "#EC WARNOK "#EC CI_SGLSELECT
+        ELSEIF lv_objtype = 'VIEW' OR lv_objtype = 'VIED'.
+            " view case
+            " find out which package the ABAP object belongs to
+            SELECT SINGLE devclass INTO lv_devclass FROM tadir
+                WHERE object = 'VIEW' AND obj_name = lv_objname.    "#EC WARNOK "#EC CI_SGLSELECT
         ELSE.
 
             " all other config change objects
@@ -887,6 +1198,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                 iv_objname = lv_objname
                 iv_objtype = lv_objtype
                 iv_mode = c_latest_version
+                iv_trid = ld_cs_request-h-trkorr
                 iv_date = ld_cs_request-h-as4date
                 iv_time = ld_cs_request-h-as4time
                 iv_findtest = abap_false
@@ -939,6 +1251,72 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                     ev_filecontent = lv_filecontent
                     ).
             CHECK rv_success = abap_true.
+        ELSEIF lv_objtype = 'DTED' OR lv_objtype = 'DTEL'.
+            IF iv_deltastats = abap_false.
+                me->get_dataelement_content(
+                    EXPORTING
+                        iv_version = lt_objversions[ 1 ]-objversionno
+                        iv_objname = lt_objversions[ 1 ]-objname
+                    IMPORTING
+                        ev_filecontent = lv_filecontent
+                        et_filecontent = lt_filecontent
+                         ).
+            ENDIF.
+        ELSEIF lv_objtype = 'DOMA' OR lv_objtype = 'DOMD'.
+            IF iv_deltastats = abap_false.
+                me->get_domain_content(
+                    EXPORTING
+                        iv_version = lt_objversions[ 1 ]-objversionno
+                        iv_objname = lt_objversions[ 1 ]-objname
+                    IMPORTING
+                        ev_filecontent = lv_filecontent
+                        et_filecontent = lt_filecontent
+                         ).
+            ENDIF.
+        ELSEIF lv_objtype = 'ENQU' OR lv_objtype = 'ENQD'.
+            IF iv_deltastats = abap_false.
+                me->get_lockobject_content(
+                    EXPORTING
+                        iv_version = lt_objversions[ 1 ]-objversionno
+                        iv_objname = lt_objversions[ 1 ]-objname
+                    IMPORTING
+                        ev_filecontent = lv_filecontent
+                        et_filecontent = lt_filecontent
+                         ).
+            ENDIF.
+        ELSEIF lv_objtype = 'SHLP' OR lv_objtype = 'SHLD'.
+            IF iv_deltastats = abap_false.
+                me->get_searchhelp_content(
+                    EXPORTING
+                        iv_version = lt_objversions[ 1 ]-objversionno
+                        iv_objname = lt_objversions[ 1 ]-objname
+                    IMPORTING
+                        ev_filecontent = lv_filecontent
+                        et_filecontent = lt_filecontent
+                         ).
+            ENDIF.
+        ELSEIF lv_objtype = 'TTYP' OR lv_objtype = 'TTYD'.
+            IF iv_deltastats = abap_false.
+                me->get_tabletype_content(
+                    EXPORTING
+                        iv_version = lt_objversions[ 1 ]-objversionno
+                        iv_objname = lt_objversions[ 1 ]-objname
+                    IMPORTING
+                        ev_filecontent = lv_filecontent
+                        et_filecontent = lt_filecontent
+                         ).
+            ENDIF.
+        ELSEIF lv_objtype = 'VIEW' OR lv_objtype = 'VIED'.
+            IF iv_deltastats = abap_false.
+                me->get_view_content(
+                    EXPORTING
+                        iv_version = lt_objversions[ 1 ]-objversionno
+                        iv_objname = lt_objversions[ 1 ]-objname
+                    IMPORTING
+                        ev_filecontent = lv_filecontent
+                        et_filecontent = lt_filecontent
+                         ).
+            ENDIF.
         ELSE.
 
             CLEAR: lv_total_insertions, lv_total_deletions.
@@ -1473,37 +1851,628 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD GET_DATAELEMENT_CONTENT.
+
+      DATA lv_no_release_transformation TYPE svrs_bool.
+      DATA lv_info_line TYPE abaptext-line.
+      DATA smodilog_new TYPE TABLE OF smodilog.
+      DATA smodisrc_new TYPE TABLE OF smodisrc.
+      DATA lt_dd04tv_tab TYPE TABLE OF dd04tv.
+      DATA lt_dd04v_tab TYPE TABLE OF dd04v.
+      DATA ls_data_element_desc TYPE ty_data_element_desc.
+      DATA ls_dd04v TYPE dd04v.
+      DATA lv_ddtext TYPE string.
+
+      IF iv_logdest = space OR iv_logdest = 'NONE'.
+          lv_no_release_transformation = abap_true.
+      ELSE.
+          lv_no_release_transformation = abap_false.
+      ENDIF.
+
+      CALL FUNCTION 'SVRS_GET_VERSION_DTED_40'
+          EXPORTING
+              destination                  = ''
+              object_name                  = iv_objname
+              versno                       = iv_version
+              iv_no_release_transformation = lv_no_release_transformation
+          IMPORTING
+              info_line                    = lv_info_line
+          TABLES
+              vsmodisrc                    = smodisrc_new
+              dd04tv_tab                   = lt_dd04tv_tab
+              dd04v_tab                    = lt_dd04v_tab
+              vsmodilog                    = smodilog_new
+          EXCEPTIONS
+              no_version                   = 1
+              OTHERS                       = 2.
+      IF sy-subrc <> 0.
+          me->write_telemetry( iv_message = |GET_DATAELEMENT_CONTENT fails in fetching content lines for { iv_objname } version { iv_version }| ).
+          rv_success = abap_false.
+          RETURN.
+      ENDIF.
+
+      ls_dd04v = lt_dd04v_tab[ 1 ].
+      ls_data_element_desc-as4user = ls_dd04v-as4user.
+      ls_data_element_desc-as4date = ls_dd04v-as4date.
+      ls_data_element_desc-as4time = ls_dd04v-as4time.
+      ls_data_element_desc-rollname = ls_dd04v-rollname.
+      ls_data_element_desc-ddlanguage = ls_dd04v-ddlanguage.
+      ls_data_element_desc-domname = ls_dd04v-domname.
+      ls_data_element_desc-ddtext = lt_dd04tv_tab[ ddlanguage = 'E' ]-ddtext.
+      ls_data_element_desc-datatype = ls_dd04v-datatype.
+      ls_data_element_desc-leng = ls_dd04v-leng.
+      ls_data_element_desc-decimals = ls_dd04v-decimals.
+      ls_data_element_desc-outputlen = ls_dd04v-outputlen.
+      ls_data_element_desc-headlen = ls_dd04v-headlen.
+      ls_data_element_desc-scrlen1 = ls_dd04v-scrlen1.
+      ls_data_element_desc-scrlen2 = ls_dd04v-scrlen2.
+      ls_data_element_desc-scrlen3 = ls_dd04v-scrlen3.
+      ls_data_element_desc-reptext = ls_dd04v-reptext.
+      ls_data_element_desc-scrtext_s = ls_dd04v-scrtext_s.
+      ls_data_element_desc-scrtext_m = ls_dd04v-scrtext_m.
+      ls_data_element_desc-scrtext_l = ls_dd04v-scrtext_l.
+
+      /UI2/CL_JSON=>serialize(
+          EXPORTING
+              !data = ls_data_element_desc
+              pretty_name = /ui2/cl_json=>pretty_mode-low_case
+          RECEIVING
+              r_json = ev_filecontent
+               ).
+
+      " beautify a bit with line breaks for code diff benefit
+      REPLACE ALL OCCURRENCES OF ',' IN ev_filecontent WITH |,{ CL_ABAP_CHAR_UTILITIES=>CR_LF }|.
+
+      SPLIT ev_filecontent AT CL_ABAP_CHAR_UTILITIES=>CR_LF INTO TABLE et_filecontent.
+
+      " align with GUI_DOWNLOAD which adds a blank line
+      ev_filecontent = ev_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
+
+      rv_success = abap_true.
+
+  ENDMETHOD.
+
+
+  METHOD GET_DOMAIN_CONTENT.
+
+      DATA lv_no_release_transformation TYPE svrs_bool.
+      DATA lv_info_line TYPE abaptext-line.
+      DATA smodilog_new TYPE TABLE OF smodilog.
+      DATA smodisrc_new TYPE TABLE OF smodisrc.
+      DATA lt_dd01tv_tab TYPE TABLE OF dd01tv.
+      DATA lt_dd01v_tab TYPE TABLE OF dd01v.
+      DATA lt_dd07tv_tab TYPE TABLE OF dd07tv.
+      DATA lt_dd07v_tab TYPE TABLE OF dd07v.
+      DATA ls_domain_desc TYPE ty_domain_desc.
+      DATA ls_dd01v TYPE dd01v.
+
+      IF iv_logdest = space OR iv_logdest = 'NONE'.
+          lv_no_release_transformation = abap_true.
+      ELSE.
+          lv_no_release_transformation = abap_false.
+      ENDIF.
+
+      CALL FUNCTION 'SVRS_GET_VERSION_DOMD_40'
+          EXPORTING
+              destination                  = ''
+              object_name                  = iv_objname
+              versno                       = iv_version
+              iv_no_release_transformation = lv_no_release_transformation
+          IMPORTING
+              info_line                    = lv_info_line
+          TABLES
+              vsmodisrc                    = smodisrc_new
+              dd01tv_tab                   = lt_dd01tv_tab
+              dd01v_tab                    = lt_dd01v_tab
+              dd07tv_tab                   = lt_dd07tv_tab
+              dd07v_tab                    = lt_dd07v_tab
+              vsmodilog                    = smodilog_new
+          EXCEPTIONS
+              no_version                   = 1
+              OTHERS                       = 2.
+      IF sy-subrc <> 0.
+          me->write_telemetry( iv_message = |GET_DOMAIN_CONTENT fails in fetching content lines for { iv_objname } version { iv_version }| ).
+          rv_success = abap_false.
+          RETURN.
+      ENDIF.
+
+      ls_dd01v = lt_dd01v_tab[ 1 ].
+      ls_domain_desc-as4user = ls_dd01v-as4user.
+      ls_domain_desc-as4date = ls_dd01v-as4date.
+      ls_domain_desc-as4time = ls_dd01v-as4time.
+      ls_domain_desc-domname = ls_dd01v-domname.
+      ls_domain_desc-ddlanguage = ls_dd01v-ddlanguage.
+      ls_domain_desc-ddtext = lt_dd01tv_tab[ ddlanguage = 'E' ]-ddtext.
+      ls_domain_desc-datatype = ls_dd01v-datatype.
+      ls_domain_desc-leng = ls_dd01v-leng.
+      ls_domain_desc-decimals = ls_dd01v-decimals.
+      ls_domain_desc-outputlen = ls_dd01v-outputlen.
+      ls_domain_desc-entitytab = ls_dd01v-entitytab.
+
+      /UI2/CL_JSON=>serialize(
+          EXPORTING
+              !data = ls_domain_desc
+              pretty_name = /ui2/cl_json=>pretty_mode-low_case
+          RECEIVING
+              r_json = ev_filecontent
+               ).
+
+      " beautify a bit with line breaks for code diff benefit
+      REPLACE ALL OCCURRENCES OF ',' IN ev_filecontent WITH |,{ CL_ABAP_CHAR_UTILITIES=>CR_LF }|.
+
+      SPLIT ev_filecontent AT CL_ABAP_CHAR_UTILITIES=>CR_LF INTO TABLE et_filecontent.
+
+      " align with GUI_DOWNLOAD which adds a blank line
+      ev_filecontent = ev_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
+
+      rv_success = abap_true.
+
+  ENDMETHOD.
+
+
+  METHOD GET_LOCKOBJECT_CONTENT.
+
+      DATA lv_no_release_transformation TYPE svrs_bool.
+      DATA lv_info_line TYPE abaptext-line.
+      DATA smodilog_new TYPE TABLE OF smodilog.
+      DATA smodisrc_new TYPE TABLE OF smodisrc.
+      DATA lt_dd25tv_tab TYPE TABLE OF dd25tv.
+      DATA lt_dd25v_tab TYPE TABLE OF dd25v.
+      DATA lt_dd26v_tab TYPE TABLE OF dd26v.
+      DATA lt_dd27v_tab TYPE TABLE OF dd27v.
+      DATA ls_lock_object_desc TYPE ty_lock_object_desc.
+      DATA ls_dd25v TYPE dd25v.
+      DATA ls_dd26v TYPE ty_dd26v.
+      DATA ls_dd27v TYPE ty_dd27v.
+
+      IF iv_logdest = space OR iv_logdest = 'NONE'.
+          lv_no_release_transformation = abap_true.
+      ELSE.
+          lv_no_release_transformation = abap_false.
+      ENDIF.
+
+      CALL FUNCTION 'SVRS_GET_VERSION_ENQD_40'
+          EXPORTING
+              destination                  = ''
+              object_name                  = iv_objname
+              versno                       = iv_version
+              iv_no_release_transformation = lv_no_release_transformation
+          IMPORTING
+              info_line                    = lv_info_line
+          TABLES
+              vsmodisrc                    = smodisrc_new
+              dd25tv_tab                   = lt_dd25tv_tab
+              dd25v_tab                    = lt_dd25v_tab
+              dd26v_tab                    = lt_dd26v_tab
+              dd27v_tab                    = lt_dd27v_tab
+              vsmodilog                    = smodilog_new
+          EXCEPTIONS
+              no_version                   = 1
+              OTHERS                       = 2.
+      IF sy-subrc <> 0.
+          me->write_telemetry( iv_message = |GET_LOCKOBJECT_CONTENT fails in fetching content lines for { iv_objname } version { iv_version }| ).
+          rv_success = abap_false.
+          RETURN.
+      ENDIF.
+
+      ls_dd25v = lt_dd25v_tab[ 1 ].
+      ls_lock_object_desc-dd25v-as4user = ls_dd25v-as4user.
+      ls_lock_object_desc-dd25v-as4date = ls_dd25v-as4date.
+      ls_lock_object_desc-dd25v-as4time = ls_dd25v-as4time.
+      ls_lock_object_desc-dd25v-viewname = ls_dd25v-viewname.
+      ls_lock_object_desc-dd25v-ddlanguage = ls_dd25v-ddlanguage.
+      ls_lock_object_desc-dd25v-ddtext = lt_dd25tv_tab[ ddlanguage = 'E' ]-ddtext.
+
+      LOOP AT lt_dd26v_tab INTO DATA(wa26).
+          CLEAR ls_dd26v.
+          ls_dd26v-tabname = wa26-tabname.
+          ls_dd26v-tabpos = wa26-tabpos.
+          ls_dd26v-fortabname = wa26-fortabname.
+          ls_dd26v-forfield = wa26-forfield.
+          ls_dd26v-fordir = wa26-fordir.
+          APPEND ls_dd26v TO ls_lock_object_desc-dd26v.
+      ENDLOOP.
+
+      LOOP AT lt_dd27v_tab INTO DATA(wa27).
+          CLEAR ls_dd27v.
+          ls_dd27v-viewfield = wa27-viewfield.
+          ls_dd27v-objpos = wa27-objpos.
+          ls_dd27v-tabname = wa27-tabname.
+          ls_dd27v-keyflag = wa27-keyflag.
+          ls_dd27v-rollname = wa27-rollname.
+          ls_dd27v-rdonly = wa27-rdonly.
+          ls_dd27v-dbviewfield = wa27-dbviewfield.
+          ls_dd27v-enqmode = wa27-enqmode.
+          APPEND ls_dd27v TO ls_lock_object_desc-dd27v.
+      ENDLOOP.
+
+      /UI2/CL_JSON=>serialize(
+          EXPORTING
+              !data = ls_lock_object_desc
+              pretty_name = /ui2/cl_json=>pretty_mode-low_case
+          RECEIVING
+              r_json = ev_filecontent
+               ).
+
+      " beautify a bit with line breaks for code diff benefit
+      REPLACE ALL OCCURRENCES OF ',' IN ev_filecontent WITH |,{ CL_ABAP_CHAR_UTILITIES=>CR_LF }|.
+
+      SPLIT ev_filecontent AT CL_ABAP_CHAR_UTILITIES=>CR_LF INTO TABLE et_filecontent.
+
+      " align with GUI_DOWNLOAD which adds a blank line
+      ev_filecontent = ev_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
+
+      rv_success = abap_true.
+
+  ENDMETHOD.
+
+
+  METHOD GET_SEARCHHELP_CONTENT.
+
+      DATA lv_no_release_transformation TYPE svrs_bool.
+      DATA lv_info_line TYPE abaptext-line.
+      DATA smodilog_new TYPE TABLE OF smodilog.
+      DATA smodisrc_new TYPE TABLE OF smodisrc.
+      DATA lt_dd30tv_tab TYPE TABLE OF dd30tv.
+      DATA lt_dd30v_tab TYPE TABLE OF dd30v.
+      DATA lt_dd31v_tab TYPE TABLE OF dd31v.
+      DATA lt_dd32v_tab TYPE TABLE OF dd32v.
+      DATA lt_dd33v_tab TYPE TABLE OF dd33v.
+      DATA ls_search_help_desc TYPE ty_search_help_desc.
+      DATA ls_dd30v TYPE dd30v.
+      DATA ls_dd31v TYPE ty_dd31v.
+      DATA ls_dd32v TYPE ty_dd32v.
+      DATA ls_dd33v TYPE ty_dd33v.
+
+      IF iv_logdest = space OR iv_logdest = 'NONE'.
+          lv_no_release_transformation = abap_true.
+      ELSE.
+          lv_no_release_transformation = abap_false.
+      ENDIF.
+
+      CALL FUNCTION 'SVRS_GET_VERSION_SHLD_40'
+          EXPORTING
+              destination                  = ''
+              object_name                  = iv_objname
+              versno                       = iv_version
+              iv_no_release_transformation = lv_no_release_transformation
+          IMPORTING
+              info_line                    = lv_info_line
+          TABLES
+              vsmodisrc                    = smodisrc_new
+              dd30tv_tab                   = lt_dd30tv_tab
+              dd30v_tab                    = lt_dd30v_tab
+              dd31v_tab                    = lt_dd31v_tab
+              dd32v_tab                    = lt_dd32v_tab
+              dd33v_tab                    = lt_dd33v_tab
+              vsmodilog                    = smodilog_new
+          EXCEPTIONS
+              no_version                   = 1
+              OTHERS                       = 2.
+      IF sy-subrc <> 0.
+          me->write_telemetry( iv_message = |GET_SEARCHHELP_CONTENT fails in fetching content lines for { iv_objname } version { iv_version }| ).
+          rv_success = abap_false.
+          RETURN.
+      ENDIF.
+
+    TYPES: BEGIN OF ty_dd33v,
+            fieldname TYPE string,
+            subshlp TYPE string,
+            subfield TYPE string,
+           END OF ty_dd33v.
+
+      ls_dd30v = lt_dd30v_tab[ 1 ].
+      ls_search_help_desc-dd30v-as4user = ls_dd30v-as4user.
+      ls_search_help_desc-dd30v-as4date = ls_dd30v-as4date.
+      ls_search_help_desc-dd30v-as4time = ls_dd30v-as4time.
+      ls_search_help_desc-dd30v-shlpname = ls_dd30v-shlpname.
+      ls_search_help_desc-dd30v-ddlanguage = ls_dd30v-ddlanguage.
+      ls_search_help_desc-dd30v-issimple = ls_dd30v-issimple.
+      ls_search_help_desc-dd30v-selmethod = ls_dd30v-selmethod.
+      ls_search_help_desc-dd30v-dialogtype = ls_dd30v-dialogtype.
+      ls_search_help_desc-dd30v-ddtext = lt_dd30tv_tab[ ddlanguage = 'E' ]-ddtext.
+
+      LOOP AT lt_dd31v_tab INTO DATA(wa31).
+          CLEAR ls_dd31v.
+          ls_dd31v-subshlp = wa31-subshlp.
+          ls_dd31v-shposition = wa31-shposition.
+          ls_dd31v-viashlp = wa31-viashlp.
+          ls_dd31v-hideflag = wa31-hideflag.
+          APPEND ls_dd31v TO ls_search_help_desc-dd31v.
+      ENDLOOP.
+
+      LOOP AT lt_dd32v_tab INTO DATA(wa32).
+          CLEAR ls_dd32v.
+          ls_dd32v-fieldname = wa32-fieldname.
+          ls_dd32v-flposition = wa32-flposition.
+          ls_dd32v-rollname = wa32-rollname.
+          ls_dd32v-shlpinput = wa32-shlpinput.
+          ls_dd32v-shlpoutput = wa32-shlpoutput.
+          ls_dd32v-shlpselpos = wa32-shlpselpos.
+          ls_dd32v-shlpseldis = wa32-shlpseldis.
+          APPEND ls_dd32v TO ls_search_help_desc-dd32v.
+      ENDLOOP.
+
+      LOOP AT lt_dd33v_tab INTO DATA(wa33).
+          CLEAR ls_dd33v.
+          ls_dd33v-fieldname = wa33-fieldname.
+          ls_dd33v-subshlp = wa33-subshlp.
+          ls_dd33v-subfield = wa33-subfield.
+          APPEND ls_dd33v TO ls_search_help_desc-dd33v.
+      ENDLOOP.
+
+      /UI2/CL_JSON=>serialize(
+          EXPORTING
+              !data = ls_search_help_desc
+              pretty_name = /ui2/cl_json=>pretty_mode-low_case
+          RECEIVING
+              r_json = ev_filecontent
+               ).
+
+      " beautify a bit with line breaks for code diff benefit
+      REPLACE ALL OCCURRENCES OF ',' IN ev_filecontent WITH |,{ CL_ABAP_CHAR_UTILITIES=>CR_LF }|.
+
+      SPLIT ev_filecontent AT CL_ABAP_CHAR_UTILITIES=>CR_LF INTO TABLE et_filecontent.
+
+      " align with GUI_DOWNLOAD which adds a blank line
+      ev_filecontent = ev_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
+
+      rv_success = abap_true.
+
+  ENDMETHOD.
+
+
+  METHOD GET_TABLETYPE_CONTENT.
+
+      DATA lv_no_release_transformation TYPE svrs_bool.
+      DATA lv_info_line TYPE abaptext-line.
+      DATA smodilog_new TYPE TABLE OF smodilog.
+      DATA smodisrc_new TYPE TABLE OF smodisrc.
+      DATA lt_dd40tv_tab TYPE TABLE OF dd40tv.
+      DATA lt_dd40v_tab TYPE TABLE OF dd40v.
+      DATA lt_dd42v_tab TYPE TABLE OF dd42v.
+      DATA lt_dd43tv_tab TYPE TABLE OF dd43t.
+      DATA lt_dd43v_tab TYPE TABLE OF dd43v.
+      DATA ls_table_type_desc TYPE ty_table_type_desc.
+      DATA ls_dd40v TYPE dd40v.
+      DATA ls_dd42v TYPE ty_dd42v.
+      DATA ls_dd43v TYPE ty_dd43v.
+
+      IF iv_logdest = space OR iv_logdest = 'NONE'.
+          lv_no_release_transformation = abap_true.
+      ELSE.
+          lv_no_release_transformation = abap_false.
+      ENDIF.
+
+      CALL FUNCTION 'SVRS_GET_VERSION_TTYD_40'
+          EXPORTING
+              destination                  = ''
+              object_name                  = iv_objname
+              versno                       = iv_version
+              iv_no_release_transformation = lv_no_release_transformation
+          IMPORTING
+              info_line                    = lv_info_line
+          TABLES
+              vsmodisrc                    = smodisrc_new
+              dd40tv_tab                   = lt_dd40tv_tab
+              dd40v_tab                    = lt_dd40v_tab
+              dd42v_tab                    = lt_dd42v_tab
+              dd43tv_tab                   = lt_dd43tv_tab
+              dd43v_tab                    = lt_dd43v_tab
+              vsmodilog                    = smodilog_new
+          EXCEPTIONS
+              no_version                   = 1
+              OTHERS                       = 2.
+      IF sy-subrc <> 0.
+          me->write_telemetry( iv_message = |GET_TABLETYPE_CONTENT fails in fetching content lines for { iv_objname } version { iv_version }| ).
+          rv_success = abap_false.
+          RETURN.
+      ENDIF.
+
+      ls_dd40v = lt_dd40v_tab[ 1 ].
+      ls_table_type_desc-dd40v-as4user = ls_dd40v-as4user.
+      ls_table_type_desc-dd40v-as4date = ls_dd40v-as4date.
+      ls_table_type_desc-dd40v-as4time = ls_dd40v-as4time.
+      ls_table_type_desc-dd40v-typename = ls_dd40v-typename.
+      ls_table_type_desc-dd40v-ddlanguage = ls_dd40v-ddlanguage.
+      ls_table_type_desc-dd40v-ddtext = lt_dd40tv_tab[ ddlanguage = 'E' ]-ddtext.
+      ls_table_type_desc-dd40v-datatype = ls_dd40v-datatype.
+      ls_table_type_desc-dd40v-rowtype = ls_dd40v-rowtype.
+      ls_table_type_desc-dd40v-rowkind = ls_dd40v-rowkind.
+      ls_table_type_desc-dd40v-keykind = ls_dd40v-keykind.
+      ls_table_type_desc-dd40v-keyfdcount = ls_dd40v-keyfdcount.
+      ls_table_type_desc-dd40v-typelen = ls_dd40v-typelen.
+      ls_table_type_desc-dd40v-ttypkind = ls_dd40v-ttypkind.
+
+      LOOP AT lt_dd42v_tab INTO DATA(wa42).
+          CLEAR ls_dd42v.
+          ls_dd42v-seckeyname = wa42-seckeyname.
+          ls_dd42v-keyfdpos = wa42-keyfdpos.
+          ls_dd42v-keyfield = wa42-keyfield.
+          ls_dd42v-rowtypepos = wa42-rowtypepos.
+          APPEND ls_dd42v TO ls_table_type_desc-dd42v.
+      ENDLOOP.
+
+      LOOP AT lt_dd43v_tab INTO DATA(wa43).
+          CLEAR ls_dd43v.
+          ls_dd43v-seckeyname = wa43-seckeyname.
+          ls_dd43v-seckeyunique = wa43-seckeyunique.
+          ls_dd43v-ddlanguage = wa43-ddlanguage.
+          ls_dd43v-kind = wa43-kind.
+          ls_dd43v-accessmode = wa43-accessmode.
+          ls_dd43v-keydescription = wa43-keydescription.
+          APPEND ls_dd42v TO ls_table_type_desc-dd42v.
+      ENDLOOP.
+
+      /UI2/CL_JSON=>serialize(
+          EXPORTING
+              !data = ls_table_type_desc
+              pretty_name = /ui2/cl_json=>pretty_mode-low_case
+          RECEIVING
+              r_json = ev_filecontent
+               ).
+
+      " beautify a bit with line breaks for code diff benefit
+      REPLACE ALL OCCURRENCES OF ',' IN ev_filecontent WITH |,{ CL_ABAP_CHAR_UTILITIES=>CR_LF }|.
+
+      SPLIT ev_filecontent AT CL_ABAP_CHAR_UTILITIES=>CR_LF INTO TABLE et_filecontent.
+
+      " align with GUI_DOWNLOAD which adds a blank line
+      ev_filecontent = ev_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
+
+      rv_success = abap_true.
+
+  ENDMETHOD.
+
+
+  METHOD GET_VIEW_CONTENT.
+
+      DATA lv_no_release_transformation TYPE svrs_bool.
+      DATA lv_info_line TYPE abaptext-line.
+      DATA smodilog_new TYPE TABLE OF smodilog.
+      DATA smodisrc_new TYPE TABLE OF smodisrc.
+      DATA lt_dd25tv_tab TYPE TABLE OF dd25tv.
+      DATA lt_dd25v_tab TYPE TABLE OF dd25v.
+      DATA lt_dd26v_tab TYPE TABLE OF dd26v.
+      DATA lt_dd27v_tab TYPE TABLE OF dd27v.
+      DATA lt_dd28v_tab TYPE TABLE OF dd28v.
+      DATA ls_view_desc TYPE ty_view_desc.
+      DATA ls_dd25v TYPE dd25v.
+      DATA ls_dd26v TYPE ty_dd26v.
+      DATA ls_dd27v TYPE ty_dd27v.
+      DATA ls_dd28v TYPE ty_dd28v.
+
+      IF iv_logdest = space OR iv_logdest = 'NONE'.
+          lv_no_release_transformation = abap_true.
+      ELSE.
+          lv_no_release_transformation = abap_false.
+      ENDIF.
+
+      CALL FUNCTION 'SVRS_GET_VERSION_VIED_40'
+          EXPORTING
+              destination                  = ''
+              object_name                  = iv_objname
+              versno                       = iv_version
+              iv_no_release_transformation = lv_no_release_transformation
+          IMPORTING
+              info_line                    = lv_info_line
+          TABLES
+              vsmodisrc                    = smodisrc_new
+              dd25tv_tab                   = lt_dd25tv_tab
+              dd25v_tab                    = lt_dd25v_tab
+              dd26v_tab                    = lt_dd26v_tab
+              dd27v_tab                    = lt_dd27v_tab
+              dd28v_tab                    = lt_dd28v_tab
+              vsmodilog                    = smodilog_new
+          EXCEPTIONS
+              no_version                   = 1
+              OTHERS                       = 2.
+      IF sy-subrc <> 0.
+          me->write_telemetry( iv_message = |GET_VIEW_CONTENT fails in fetching content lines for { iv_objname } version { iv_version }| ).
+          rv_success = abap_false.
+          RETURN.
+      ENDIF.
+
+      ls_dd25v = lt_dd25v_tab[ 1 ].
+      ls_view_desc-dd25v-as4user = ls_dd25v-as4user.
+      ls_view_desc-dd25v-as4date = ls_dd25v-as4date.
+      ls_view_desc-dd25v-as4time = ls_dd25v-as4time.
+      ls_view_desc-dd25v-viewname = ls_dd25v-viewname.
+      ls_view_desc-dd25v-ddlanguage = ls_dd25v-ddlanguage.
+      ls_view_desc-dd25v-ddtext = lt_dd25tv_tab[ ddlanguage = 'E' ]-ddtext.
+
+      LOOP AT lt_dd26v_tab INTO DATA(wa26).
+          CLEAR ls_dd26v.
+          ls_dd26v-tabname = wa26-tabname.
+          ls_dd26v-tabpos = wa26-tabpos.
+          ls_dd26v-fortabname = wa26-fortabname.
+          ls_dd26v-forfield = wa26-forfield.
+          ls_dd26v-fordir = wa26-fordir.
+          APPEND ls_dd26v TO ls_view_desc-dd26v.
+      ENDLOOP.
+
+      LOOP AT lt_dd27v_tab INTO DATA(wa27).
+          CLEAR ls_dd27v.
+          ls_dd27v-viewfield = wa27-viewfield.
+          ls_dd27v-objpos = wa27-objpos.
+          ls_dd27v-tabname = wa27-tabname.
+          ls_dd27v-keyflag = wa27-keyflag.
+          ls_dd27v-rollname = wa27-rollname.
+          ls_dd27v-rdonly = wa27-rdonly.
+          ls_dd27v-dbviewfield = wa27-dbviewfield.
+          ls_dd27v-enqmode = wa27-enqmode.
+          APPEND ls_dd27v TO ls_view_desc-dd27v.
+      ENDLOOP.
+
+      LOOP AT lt_dd28v_tab INTO DATA(wa28).
+          CLEAR ls_dd28v.
+          ls_dd28v-condname = wa28-condname.
+          ls_dd28v-position = wa28-position.
+          ls_dd28v-tabname = wa28-tabname.
+          ls_dd28v-negation = wa28-negation.
+          ls_dd28v-operator = wa28-operator.
+          ls_dd28v-constants = wa28-constants.
+          ls_dd28v-contline = wa28-contline.
+          ls_dd28v-and_or = wa28-and_or.
+          ls_dd28v-offset = wa28-offset.
+          ls_dd28v-flength = wa28-flength.
+          ls_dd28v-joperator = wa28-joperator.
+          APPEND ls_dd28v TO ls_view_desc-dd28v.
+      ENDLOOP.
+
+      /UI2/CL_JSON=>serialize(
+          EXPORTING
+              !data = ls_view_desc
+              pretty_name = /ui2/cl_json=>pretty_mode-low_case
+          RECEIVING
+              r_json = ev_filecontent
+               ).
+
+      " beautify a bit with line breaks for code diff benefit
+      REPLACE ALL OCCURRENCES OF ',' IN ev_filecontent WITH |,{ CL_ABAP_CHAR_UTILITIES=>CR_LF }|.
+
+      SPLIT ev_filecontent AT CL_ABAP_CHAR_UTILITIES=>CR_LF INTO TABLE et_filecontent.
+
+      " align with GUI_DOWNLOAD which adds a blank line
+      ev_filecontent = ev_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
+
+      rv_success = abap_true.
+
+  ENDMETHOD.
+
+
   METHOD GET_CODE_LINES.
 
       DATA: lv_no_release_transformation TYPE svrs_bool.
       DATA: trdir_new TYPE TABLE OF TRDIR INITIAL SIZE 1.
-      DATA: smodilog_new TYPE table of smodilog.
+      DATA: smodilog_new TYPE TABLE OF smodilog.
 
       linecount = 0.
 
       IF iv_logdest = space OR iv_logdest = 'NONE'.
-        lv_no_release_transformation = abap_true.
+          lv_no_release_transformation = abap_true.
       ELSE.
-        lv_no_release_transformation = abap_false.
+            lv_no_release_transformation = abap_false.
       ENDIF.
 
       CALL FUNCTION 'SVRS_GET_REPS_FROM_OBJECT'
-        EXPORTING
-          destination                  = iv_logdest
-          object_name                  = iv_objname
-          object_type                  = iv_objtype
-          versno                       = iv_version
-          iv_no_release_transformation = lv_no_release_transformation
-        TABLES
-          repos_tab                    = abaptext
-          trdir_tab                    = trdir_new
-          vsmodilog                    = smodilog_new
-        EXCEPTIONS
-          no_version                   = 01.
+          EXPORTING
+            destination                  = iv_logdest
+            object_name                  = iv_objname
+            object_type                  = iv_objtype
+            versno                       = iv_version
+            iv_no_release_transformation = lv_no_release_transformation
+          TABLES
+            repos_tab                    = abaptext
+            trdir_tab                    = trdir_new
+            vsmodilog                    = smodilog_new
+          EXCEPTIONS
+            no_version                   = 1
+            OTHERS                       = 2.
       IF sy-subrc <> 0.
-         me->write_telemetry( iv_message = |GET_CODE_LINES fails in fetching code lines for { iv_objname } type { iv_objtype } version { iv_version }| ).
-         rv_success = abap_false.
-         RETURN.
+           me->write_telemetry( iv_message = |GET_CODE_LINES fails in fetching code lines for { iv_objname } type { iv_objtype } version { iv_version }| ).
+           rv_success = abap_false.
+           RETURN.
       ENDIF.
 
       linecount = lines( abaptext ).
@@ -1760,12 +2729,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             no_version  = 01
             OTHERS = 02.
     IF sy-subrc <> 0.
-        me->write_telemetry( iv_message = |BUILD_DATA_TABLE_CONTENT fails in fetching data table header for { iv_objname } version { iv_version }| ).
+        me->write_telemetry( iv_message = |GET_TABLE_SCHEMA fails in fetching data table header for { iv_objname } version { iv_version }| ).
         RETURN.
     ENDIF.
 
     IF lines( dd02v_tab ) = 0.
-        me->write_telemetry( iv_message = |BUILD_DATA_TABLE_CONTENT fails in fetching data table header for { iv_objname } with enough version| ).
+        me->write_telemetry( iv_message = |GET_TABLE_SCHEMA fails in fetching data table header for { iv_objname } with enough version| ).
         RETURN.
     ENDIF.
 
@@ -1788,6 +2757,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     ev_desc-dd02v-ddlanguage = dd02v_tab[ 1 ]-ddlanguage.
     ev_desc-dd02v-tabclass = dd02v_tab[ 1 ]-tabclass.
     ev_desc-dd02v-clidep = dd02v_tab[ 1 ]-clidep.
+    ev_desc-dd02v-as4user = dd02v_tab[ 1 ]-as4user.
+    ev_desc-dd02v-as4date = dd02v_tab[ 1 ]-as4date.
+    ev_desc-dd02v-as4time = dd02v_tab[ 1 ]-as4time.
     IF line_exists( dd02tv_tab[ ddlanguage = 'E' ] ).
         ev_desc-dd02v-ddtext = dd02tv_tab[ ddlanguage = 'E' ]-ddtext.
     ELSE.
@@ -2090,6 +3062,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                 iv_objname = lv_objname
                 iv_objtype = 'TABL'
                 iv_mode = c_latest_version
+                iv_trid = iv_request-h-trkorr
                 iv_date = iv_request-h-as4date
                 iv_time = iv_request-h-as4time
                 iv_findtest = abap_false
@@ -2564,6 +3537,41 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD GET_VERSIONS_NO_HELPER.
+
+    DATA ls_objversion TYPE ts_version_no.
+
+    CLEAR cht_vers.
+    rv_success = me->get_versions(
+        EXPORTING
+            iv_objname = iv_objname
+            iv_objtype = iv_objtype
+        CHANGING
+            it_vers = cht_vers
+             ).
+    CHECK rv_success = abap_true.
+    rv_success = me->get_valued_version(
+        EXPORTING
+            iv_mode = iv_mode
+            iv_trid = iv_trid
+            iv_date = iv_date
+            iv_time = iv_time
+        IMPORTING
+            ev_versno = ev_versno
+            ev_verscnt = ev_version_no
+        CHANGING
+            cht_vers = cht_vers
+             ).
+    IF rv_success = abap_true AND cht_objversions IS SUPPLIED.
+        ls_objversion-objversionno = ev_versno.
+        ls_objversion-objname = iv_objname.
+        ls_objversion-objtype = iv_objtype.
+        APPEND ls_objversion TO cht_objversions.
+    ENDIF.
+
+  ENDMETHOD.
+
+
   METHOD GET_VERSIONS_NO.
 
     DATA wa_ver TYPE VRSD.
@@ -2573,32 +3581,21 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     IF iv_objtype = 'FUNC'.
         " function module case
-        CLEAR lt_vers.
-        rv_success = me->get_versions(
+        rv_success = me->get_versions_no_helper(
             EXPORTING
                 iv_objname = iv_objname
                 iv_objtype = 'FUNC'
-            CHANGING
-                it_vers = lt_vers
-                 ).
-        CHECK rv_success = abap_true.
-        rv_success = me->get_valued_version(
-            EXPORTING
                 iv_mode = iv_mode
+                iv_trid = iv_trid
                 iv_date = iv_date
                 iv_time = iv_time
             IMPORTING
+                ev_version_no = ev_version_no
                 ev_versno = lv_versno
-                ev_verscnt = ev_version_no
             CHANGING
                 cht_vers = lt_vers
+                cht_objversions = cht_objversions
                  ).
-        IF rv_success = abap_true AND cht_objversions IS SUPPLIED.
-            wa_objversion-objversionno = lv_versno.
-            wa_objversion-objname = iv_objname.
-            wa_objversion-objtype = 'FUNC'.
-            APPEND wa_objversion TO cht_objversions.
-        ENDIF.
     ELSEIF iv_objtype = 'CLAS'.
         " class object case, multiple versions may return including public/protected/private sections and methods
         " if test class required, its versions will be fetched together
@@ -2607,6 +3604,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                 iv_objname = iv_objname
                 iv_objtype = iv_objtype
                 iv_mode = iv_mode
+                iv_trid = iv_trid
                 iv_date = iv_date
                 iv_time = iv_time
                 iv_findtest = iv_findtest
@@ -2616,172 +3614,208 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         rv_success = abap_true.
     ELSEIF iv_objtype = 'CINC'.
         " in TR commit scenario test class will be requested separately
-        CLEAR lt_vers.
-        rv_success = me->get_versions(
+        rv_success = me->get_versions_no_helper(
             EXPORTING
                 iv_objname = iv_objname
                 iv_objtype = 'CINC'
-            CHANGING
-                it_vers = lt_vers
-                 ).
-        CHECK rv_success = abap_true.
-        rv_success = me->get_valued_version(
-            EXPORTING
                 iv_mode = iv_mode
+                iv_trid = iv_trid
                 iv_date = iv_date
                 iv_time = iv_time
             IMPORTING
+                ev_version_no = ev_version_no
                 ev_versno = lv_versno
-                ev_verscnt = ev_version_no
             CHANGING
                 cht_vers = lt_vers
+                cht_objversions = cht_objversions
                  ).
-        IF rv_success = abap_true AND cht_objversions IS SUPPLIED.
-            wa_objversion-objversionno = lv_versno.
-            wa_objversion-objname = iv_objname.
-            wa_objversion-objtype = 'CINC'.
-            APPEND wa_objversion TO cht_objversions.
-        ENDIF.
     ELSEIF iv_objtype = 'PROG'.
         " program/include case
-        CLEAR lt_vers.
-        rv_success = me->get_versions(
+        rv_success = me->get_versions_no_helper(
             EXPORTING
                 iv_objname = iv_objname
                 iv_objtype = 'REPS'
-            CHANGING
-                it_vers = lt_vers
-                 ).
-        CHECK rv_success = abap_true.
-        rv_success = me->get_valued_version(
-            EXPORTING
                 iv_mode = iv_mode
+                iv_trid = iv_trid
                 iv_date = iv_date
                 iv_time = iv_time
             IMPORTING
+                ev_version_no = ev_version_no
                 ev_versno = lv_versno
-                ev_verscnt = ev_version_no
             CHANGING
                 cht_vers = lt_vers
+                cht_objversions = cht_objversions
                  ).
-        IF rv_success = abap_true AND cht_objversions IS SUPPLIED.
-            wa_objversion-objversionno = lv_versno.
-            wa_objversion-objname = iv_objname.
-            wa_objversion-objtype = 'REPS'.
-            APPEND wa_objversion TO cht_objversions.
-        ENDIF.
     ELSEIF iv_objtype = 'REPS'.
         " include case
-        CLEAR lt_vers.
-        rv_success = me->get_versions(
+        rv_success = me->get_versions_no_helper(
             EXPORTING
                 iv_objname = iv_objname
                 iv_objtype = 'REPS'
-            CHANGING
-                it_vers = lt_vers
-                 ).
-        CHECK rv_success = abap_true.
-        rv_success = me->get_valued_version(
-            EXPORTING
                 iv_mode = iv_mode
+                iv_trid = iv_trid
                 iv_date = iv_date
                 iv_time = iv_time
             IMPORTING
+                ev_version_no = ev_version_no
                 ev_versno = lv_versno
-                ev_verscnt = ev_version_no
             CHANGING
                 cht_vers = lt_vers
+                cht_objversions = cht_objversions
                  ).
-        IF rv_success = abap_true AND cht_objversions IS SUPPLIED.
-            wa_objversion-objversionno = lv_versno.
-            wa_objversion-objname = iv_objname.
-            wa_objversion-objtype = 'REPS'.
-            APPEND wa_objversion TO cht_objversions.
-        ENDIF.
     ELSEIF iv_objtype = 'INTF'.
         " interface case
-        CLEAR lt_vers.
-        rv_success = me->get_versions(
+        rv_success = me->get_versions_no_helper(
             EXPORTING
                 iv_objname = iv_objname
                 iv_objtype = 'INTF'
-            CHANGING
-                it_vers = lt_vers
-                 ).
-        CHECK rv_success = abap_true.
-        rv_success = me->get_valued_version(
-            EXPORTING
                 iv_mode = iv_mode
+                iv_trid = iv_trid
                 iv_date = iv_date
                 iv_time = iv_time
             IMPORTING
+                ev_version_no = ev_version_no
                 ev_versno = lv_versno
-                ev_verscnt = ev_version_no
             CHANGING
                 cht_vers = lt_vers
+                cht_objversions = cht_objversions
                  ).
-        IF rv_success = abap_true AND cht_objversions IS SUPPLIED.
-            wa_objversion-objversionno = lv_versno.
-            wa_objversion-objname = iv_objname.
-            wa_objversion-objtype = 'INTF'.
-            APPEND wa_objversion TO cht_objversions.
-        ENDIF.
     ELSEIF iv_objtype = 'ENHO'.
         " enhancement implementation case
-        CLEAR lt_vers.
-        rv_success = me->get_versions(
+        rv_success = me->get_versions_no_helper(
             EXPORTING
                 iv_objname = iv_objname
                 iv_objtype = 'ENHO'
-            CHANGING
-                it_vers = lt_vers
-                 ).
-        CHECK rv_success = abap_true.
-        rv_success = me->get_valued_version(
-            EXPORTING
                 iv_mode = iv_mode
+                iv_trid = iv_trid
                 iv_date = iv_date
                 iv_time = iv_time
             IMPORTING
+                ev_version_no = ev_version_no
                 ev_versno = lv_versno
-                ev_verscnt = ev_version_no
             CHANGING
                 cht_vers = lt_vers
+                cht_objversions = cht_objversions
                  ).
-        IF rv_success = abap_true AND cht_objversions IS SUPPLIED.
-            wa_objversion-objversionno = lv_versno.
-            wa_objversion-objname = iv_objname.
-            wa_objversion-objtype = 'ENHO'.
-            APPEND wa_objversion TO cht_objversions.
-        ENDIF.
     ELSEIF iv_objtype = 'TABL' OR iv_objtype = 'TABD'.
         " data table case
-        CLEAR lt_vers.
-        rv_success = me->get_versions(
+        rv_success = me->get_versions_no_helper(
             EXPORTING
                 iv_objname = iv_objname
                 iv_objtype = 'TABD'
-            CHANGING
-                it_vers = lt_vers
-                 ).
-        CHECK rv_success = abap_true.
-        rv_success = me->get_valued_version(
-            EXPORTING
                 iv_mode = iv_mode
+                iv_trid = iv_trid
                 iv_date = iv_date
                 iv_time = iv_time
             IMPORTING
+                ev_version_no = ev_version_no
                 ev_versno = lv_versno
-                ev_verscnt = ev_version_no
             CHANGING
                 cht_vers = lt_vers
+                cht_objversions = cht_objversions
                  ).
-        IF rv_success = abap_true AND cht_objversions IS SUPPLIED.
-            wa_objversion-objversionno = lv_versno.
-            wa_objversion-objname = iv_objname.
-            wa_objversion-objtype = 'TABD'.
-            APPEND wa_objversion TO cht_objversions.
-        ENDIF.
+    ELSEIF iv_objtype = 'DTEL' OR iv_objtype = 'DTED'.
+        " data table case
+        rv_success = me->get_versions_no_helper(
+            EXPORTING
+                iv_objname = iv_objname
+                iv_objtype = 'DTED'
+                iv_mode = iv_mode
+                iv_trid = iv_trid
+                iv_date = iv_date
+                iv_time = iv_time
+            IMPORTING
+                ev_version_no = ev_version_no
+                ev_versno = lv_versno
+            CHANGING
+                cht_vers = lt_vers
+                cht_objversions = cht_objversions
+                 ).
+    ELSEIF iv_objtype = 'DOMA' OR iv_objtype = 'DOMD'.
+        " data table case
+        rv_success = me->get_versions_no_helper(
+            EXPORTING
+                iv_objname = iv_objname
+                iv_objtype = 'DOMD'
+                iv_mode = iv_mode
+                iv_trid = iv_trid
+                iv_date = iv_date
+                iv_time = iv_time
+            IMPORTING
+                ev_version_no = ev_version_no
+                ev_versno = lv_versno
+            CHANGING
+                cht_vers = lt_vers
+                cht_objversions = cht_objversions
+                 ).
+    ELSEIF iv_objtype = 'ENQU' OR iv_objtype = 'ENQD'.
+        " lock object case
+        rv_success = me->get_versions_no_helper(
+            EXPORTING
+                iv_objname = iv_objname
+                iv_objtype = 'ENQD'
+                iv_mode = iv_mode
+                iv_trid = iv_trid
+                iv_date = iv_date
+                iv_time = iv_time
+            IMPORTING
+                ev_version_no = ev_version_no
+                ev_versno = lv_versno
+            CHANGING
+                cht_vers = lt_vers
+                cht_objversions = cht_objversions
+                 ).
+    ELSEIF iv_objtype = 'SHLP' OR iv_objtype = 'SHLD'.
+        " search help object case
+        rv_success = me->get_versions_no_helper(
+            EXPORTING
+                iv_objname = iv_objname
+                iv_objtype = 'SHLD'
+                iv_mode = iv_mode
+                iv_trid = iv_trid
+                iv_date = iv_date
+                iv_time = iv_time
+            IMPORTING
+                ev_version_no = ev_version_no
+                ev_versno = lv_versno
+            CHANGING
+                cht_vers = lt_vers
+                cht_objversions = cht_objversions
+                 ).
+    ELSEIF iv_objtype = 'TTYP' OR iv_objtype = 'TTYD'.
+        " data table case
+        rv_success = me->get_versions_no_helper(
+            EXPORTING
+                iv_objname = iv_objname
+                iv_objtype = 'TTYD'
+                iv_mode = iv_mode
+                iv_trid = iv_trid
+                iv_date = iv_date
+                iv_time = iv_time
+            IMPORTING
+                ev_version_no = ev_version_no
+                ev_versno = lv_versno
+            CHANGING
+                cht_vers = lt_vers
+                cht_objversions = cht_objversions
+                 ).
+    ELSEIF iv_objtype = 'VIEW' OR iv_objtype = 'VIED'.
+        " data table case
+        rv_success = me->get_versions_no_helper(
+            EXPORTING
+                iv_objname = iv_objname
+                iv_objtype = 'VIED'
+                iv_mode = iv_mode
+                iv_trid = iv_trid
+                iv_date = iv_date
+                iv_time = iv_time
+            IMPORTING
+                ev_version_no = ev_version_no
+                ev_versno = lv_versno
+            CHANGING
+                cht_vers = lt_vers
+                cht_objversions = cht_objversions
+                 ).
     ELSE.
         rv_success = abap_false.
         ev_version_no = 0.
@@ -2798,9 +3832,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     SORT cht_vers DESCENDING BY versno.
 
-    IF iv_date IS SUPPLIED AND iv_time IS SUPPLIED AND iv_date IS NOT INITIAL AND iv_time IS NOT INITIAL.
-        " remove version later than given time, keep active/inactive version
-        DELETE cht_vers WHERE versno <> 0 AND versno <> 99999 AND ( datum > iv_date OR ( datum = iv_date AND zeit >= iv_time ) ).
+    IF iv_date IS NOT INITIAL AND iv_time IS NOT INITIAL.
+        " remove version not matching TR ID and later than given time, keep active/inactive version
+        DELETE cht_vers WHERE versno <> 0 AND versno <> 99999 AND korrnum <> iv_trid AND ( datum > iv_date OR ( datum = iv_date AND zeit >= iv_time ) ).
     ENDIF.
 
     IF lines( cht_vers ) = 0.
@@ -2876,6 +3910,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     lv_success = me->get_valued_version(
         EXPORTING
             iv_mode = iv_mode
+            iv_trid = iv_trid
             iv_date = iv_date
             iv_time = iv_time
         IMPORTING
@@ -2906,6 +3941,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     lv_success = me->get_valued_version(
         EXPORTING
             iv_mode = iv_mode
+            iv_trid = iv_trid
             iv_date = iv_date
             iv_time = iv_time
         IMPORTING
@@ -2936,6 +3972,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     lv_success = me->get_valued_version(
         EXPORTING
             iv_mode = iv_mode
+            iv_trid = iv_trid
             iv_date = iv_date
             iv_time = iv_time
         IMPORTING
@@ -2976,6 +4013,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         lv_success = me->get_valued_version(
             EXPORTING
                 iv_mode = iv_mode
+                iv_trid = iv_trid
                 iv_date = iv_date
                 iv_time = iv_time
             IMPORTING
@@ -3023,6 +4061,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         lv_success = me->get_valued_version(
             EXPORTING
                 iv_mode = iv_mode
+                iv_trid = iv_trid
                 iv_date = iv_date
                 iv_time = iv_time
             IMPORTING

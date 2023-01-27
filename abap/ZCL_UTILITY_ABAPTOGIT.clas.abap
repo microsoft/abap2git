@@ -4,8 +4,8 @@
 " Multiple SAP systems in the landscape of a service line will share the same Git repo
 " in respective branches
 " Following ABAP objects are included in sync-ing:
-" Class, Function Module, Program, Include, Test Class, Interface,
-" Enhancement Object (hook implementation, class), Data Table,
+" Code: Class, Function Module, Program, Include, Test Class, Interface, Enhancement Object (hook implementation, class),
+" Dictionary: Data Table, Data Element, Domain, Lock Object, Search Help, Table Type, View
 " HR/payroll schema/PCR, configuration changes.
 " Following ABAP objects are not yet included in sync-ing:
 " Data dictionary objects (others), SAPScript, enhancement objects (others) and other objects.
@@ -36,7 +36,8 @@ PUBLIC SECTION.
     " constructor
     " io_objtelemetry - class object for telemetry
     " iv_methtelemetry - method name for telemetry
-    " for telemetry, the method will be invoked with parameters iv_message as string (for message content) and iv_kind as string (for category)
+    " for telemetry, the method will be invoked with parameters
+    " iv_message as string (for message content) and iv_kind as string (for category)
     METHODS constructor
         IMPORTING
             io_objtelemetry     TYPE REF TO object OPTIONAL
@@ -415,7 +416,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             et_trids = lt_trids
              ).
 
-    APPEND |System,TR,User,Date,Time,Insertions,Deletions,Tables,Rows| TO lt_stats.
+    APPEND |System,User,TR,Date,Time,Insertions,Deletions,Tables,Rows| TO lt_stats.
 
     LOOP AT lt_trids INTO DATA(wa_trid).
         CLEAR: lt_commit_objects, lv_insertions, lv_deletions, lv_tables, lv_rows.
@@ -617,6 +618,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
   METHOD GET_PACKAGE_CODES.
 
     DATA wacode TYPE ts_code_object.
+    DATA lv_trid TYPE trkorr.
     DATA lv_subpackage TYPE devclass.
     DATA lt_codes TYPE STANDARD TABLE OF ts_code_object.
     DATA lt_fmcodes TYPE STANDARD TABLE OF ts_code_object.
@@ -723,11 +725,13 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
         IF iv_uptotrid IS SUPPLIED.
             " use date/time of up-to TR ID to constrain version to select if latest version
+            lv_trid = iv_uptotrid.
             lv_success = me->oref_tr->get_versions_no(
                 EXPORTING
                     iv_objname = lv_objname3
                     iv_objtype = lv_objtype
                     iv_mode = iv_mode
+                    iv_trid = lv_trid
                     iv_date = lv_dat
                     iv_time = lv_tim
                     iv_findtest = abap_true
@@ -755,6 +759,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         CHECK lines( lt_objversions ) > 0.
 
         IF lv_objtype = 'TABL' OR lv_objtype = 'TABD'.
+
             CLEAR lt_filecontent.
             lv_success = me->oref_tr->build_data_table_content(
                 EXPORTING
@@ -769,7 +774,111 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 rv_success = abap_false.
                 CONTINUE.
             ENDIF.
+
+        ELSEIF lv_objtype = 'DTEL' OR lv_objtype = 'DTED'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_dataelement_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
+        ELSEIF lv_objtype = 'DOMA' OR lv_objtype = 'DOMD'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_domain_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
+        ELSEIF lv_objtype = 'ENQU' OR lv_objtype = 'ENQD'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_lockobject_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
+        ELSEIF lv_objtype = 'SHLP' OR lv_objtype = 'SHLD'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_searchhelp_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
+        ELSEIF lv_objtype = 'TTYP' OR lv_objtype = 'TTYD'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_tabletype_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
+        ELSEIF lv_objtype = 'VIEW' OR lv_objtype = 'VIED'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_view_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
         ELSE.
+
             " construct object content (and test class content if any) as source code lines
             CLEAR lt_filecontent.
             CLEAR lt_tclsfilecontent.
@@ -789,6 +898,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 rv_success = abap_false.
                 CONTINUE.
             ENDIF.
+
         ENDIF.
 
         CLEAR lv_subc.

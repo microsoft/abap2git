@@ -409,6 +409,90 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             ENDIF.
         ENDIF.
 
+    ELSEIF iv_commit_object-objtype = 'DTEL' OR iv_commit_object-objtype = 'DTED'.
+
+        " data element object named as <object name>.dtel.json, not following abapGit
+        IF iv_folder_structure = c_folder_structure_flat.
+            rv_name = |{ iv_commit_object-objname }.dtel.json|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Data Elements|.
+                rv_name = |Dictionary{ c_delim }Data Elements{ c_delim }{ iv_commit_object-objname }.dtel.json|.
+            ELSE.
+                rv_name = |Dictionary{ c_delimgit }Data Elements{ c_delimgit }{ iv_commit_object-objname }.dtel.json|.
+            ENDIF.
+        ENDIF.
+
+    ELSEIF iv_commit_object-objtype = 'DOMA' OR iv_commit_object-objtype = 'DOMD'.
+
+        " domain object named as <object name>.doma.json, not following abapGit
+        IF iv_folder_structure = c_folder_structure_flat.
+            rv_name = |{ iv_commit_object-objname }.doma.json|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Domains|.
+                rv_name = |Dictionary{ c_delim }Domains{ c_delim }{ iv_commit_object-objname }.doma.json|.
+            ELSE.
+                rv_name = |Dictionary{ c_delimgit }Domains{ c_delimgit }{ iv_commit_object-objname }.doma.json|.
+            ENDIF.
+        ENDIF.
+
+    ELSEIF iv_commit_object-objtype = 'ENQU' OR iv_commit_object-objtype = 'ENQD'.
+
+        " lock object named as <object name>.enqu.json, not following abapGit
+        IF iv_folder_structure = c_folder_structure_flat.
+            rv_name = |{ iv_commit_object-objname }.enqu.json|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Lock Objects|.
+                rv_name = |Dictionary{ c_delim }Lock Objects{ c_delim }{ iv_commit_object-objname }.enqu.json|.
+            ELSE.
+                rv_name = |Dictionary{ c_delimgit }Lock Objects{ c_delimgit }{ iv_commit_object-objname }.enqu.json|.
+            ENDIF.
+        ENDIF.
+
+    ELSEIF iv_commit_object-objtype = 'SHLP' OR iv_commit_object-objtype = 'SHLD'.
+
+        " search help object named as <object name>.shlp.json, not following abapGit
+        IF iv_folder_structure = c_folder_structure_flat.
+            rv_name = |{ iv_commit_object-objname }.shlp.json|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Srch Helps|.
+                rv_name = |Dictionary{ c_delim }Srch Helps{ c_delim }{ iv_commit_object-objname }.shlp.json|.
+            ELSE.
+                rv_name = |Dictionary{ c_delimgit }Srch Helps{ c_delimgit }{ iv_commit_object-objname }.shlp.json|.
+            ENDIF.
+        ENDIF.
+
+    ELSEIF iv_commit_object-objtype = 'TTYP' OR iv_commit_object-objtype = 'TTYD'.
+
+        " table type object named as <object name>.ttyp.json, not following abapGit
+        IF iv_folder_structure = c_folder_structure_flat.
+            rv_name = |{ iv_commit_object-objname }.ttyp.json|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Table Types|.
+                rv_name = |Dictionary{ c_delim }Table Types{ c_delim }{ iv_commit_object-objname }.ttyp.json|.
+            ELSE.
+                rv_name = |Dictionary{ c_delimgit }Table Types{ c_delimgit }{ iv_commit_object-objname }.ttyp.json|.
+            ENDIF.
+        ENDIF.
+
+    ELSEIF iv_commit_object-objtype = 'VIEW' OR iv_commit_object-objtype = 'VIED'.
+
+        " view object named as <object name>.view.json, not following abapGit
+        IF iv_folder_structure = c_folder_structure_flat.
+            rv_name = |{ iv_commit_object-objname }.view.json|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Views|.
+                rv_name = |Dictionary{ c_delim }Views{ c_delim }{ iv_commit_object-objname }.view.json|.
+            ELSE.
+                rv_name = |Dictionary{ c_delimgit }Views{ c_delimgit }{ iv_commit_object-objname }.view.json|.
+            ENDIF.
+        ENDIF.
+
     ELSEIF iv_commit_object-objtype = 'PSCC'.
 
         " schema named as <schema name>.schm.txt
