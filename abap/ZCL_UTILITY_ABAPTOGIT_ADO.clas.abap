@@ -493,6 +493,20 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
             ENDIF.
         ENDIF.
 
+    ELSEIF iv_commit_object-objtype = 'XSLT'.
+
+        " transformation XML object named as <object name>.xslt.json, not following abapGit
+        IF iv_folder_structure = c_folder_structure_flat.
+            rv_name = |{ iv_commit_object-objname }.xslt.json|.
+        ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            IF iv_local_folder = abap_true.
+                ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Transformations|.
+                rv_name = |Source Code Library{ c_delim }Transformations{ c_delim }{ iv_commit_object-objname }.xslt.json|.
+            ELSE.
+                rv_name = |Source Code Library{ c_delimgit }Transformations{ c_delimgit }{ iv_commit_object-objname }.xslt.json|.
+            ENDIF.
+        ENDIF.
+
     ELSEIF iv_commit_object-objtype = 'PSCC'.
 
         " schema named as <schema name>.schm.txt

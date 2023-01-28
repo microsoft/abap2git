@@ -4,7 +4,8 @@
 " Multiple SAP systems in the landscape of a service line will share the same Git repo
 " in respective branches
 " Following ABAP objects are included in sync-ing:
-" Code: Class, Function Module, Program, Include, Test Class, Interface, Enhancement Object (hook implementation, class),
+" Code: Class, Function Module, Program, Include, Test Class, Interface,
+" Enhancement Object (hook implementation, class), Transformation,
 " Dictionary: Data Table, Data Element, Domain, Lock Object, Search Help, Table Type, View
 " HR/payroll schema/PCR, configuration changes.
 " Following ABAP objects are not yet included in sync-ing:
@@ -864,6 +865,23 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
             CLEAR lt_filecontent.
             lv_success = me->oref_tr->get_view_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
+        ELSEIF lv_objtype = 'XSLT'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_xslt_content(
                 EXPORTING
                     iv_objname = lt_objversions[ 1 ]-objname
                     iv_version = lt_objversions[ 1 ]-objversionno

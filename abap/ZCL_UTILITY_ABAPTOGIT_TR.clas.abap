@@ -240,6 +240,21 @@ PUBLIC SECTION.
             et_filecontent  TYPE tty_abaptext
         RETURNING VALUE(rv_success) TYPE string.
 
+    " get content of transformation XML
+    " iv_objname - ABAP object name from table TADIR
+    " iv_version - object version
+    " ev_filecontent - file content
+    " et_filecontent - file content lines
+    METHODS get_xslt_content
+        IMPORTING
+            iv_version      TYPE versno
+            iv_objname      TYPE versobjnam
+            iv_logdest      TYPE rfcdest DEFAULT ''
+         EXPORTING
+            ev_filecontent  TYPE string
+            et_filecontent  TYPE tty_abaptext
+        RETURNING VALUE(rv_success) TYPE string.
+
     " get content of view
     " iv_objname - ABAP object name from table TADIR
     " iv_version - object version
@@ -1163,6 +1178,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             " find out which package the ABAP object belongs to
             SELECT SINGLE devclass INTO lv_devclass FROM tadir
                 WHERE object = 'VIEW' AND obj_name = lv_objname.    "#EC WARNOK "#EC CI_SGLSELECT
+        ELSEIF lv_objtype = 'XSLT'.
+            " transformation XML case
+            " find out which package the ABAP object belongs to
+            SELECT SINGLE devclass INTO lv_devclass FROM tadir
+                WHERE object = 'XSLT' AND obj_name = lv_objname.    "#EC WARNOK "#EC CI_SGLSELECT
         ELSE.
 
             " all other config change objects
@@ -1241,6 +1261,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             me->get_fugr( EXPORTING iv_objname = lv_funcname IMPORTING ev_fugrname = lv_fugr ).
         ENDIF.
 
+        CLEAR: lt_filecontent, lv_filecontent.
+
         " construct object content (and test class content won't be provided given not required to in fetching version above)
         IF lv_objtype = 'TABL' OR lv_objtype = 'TABD'.
             rv_success = me->build_data_table_content(
@@ -1309,6 +1331,17 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         ELSEIF lv_objtype = 'VIEW' OR lv_objtype = 'VIED'.
             IF iv_deltastats = abap_false.
                 me->get_view_content(
+                    EXPORTING
+                        iv_version = lt_objversions[ 1 ]-objversionno
+                        iv_objname = lt_objversions[ 1 ]-objname
+                    IMPORTING
+                        ev_filecontent = lv_filecontent
+                        et_filecontent = lt_filecontent
+                         ).
+            ENDIF.
+        ELSEIF lv_objtype = 'XSLT'.
+            IF iv_deltastats = abap_false.
+                me->get_xslt_content(
                     EXPORTING
                         iv_version = lt_objversions[ 1 ]-objversionno
                         iv_objname = lt_objversions[ 1 ]-objname
@@ -2155,12 +2188,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           RETURN.
       ENDIF.
 
-    TYPES: BEGIN OF ty_dd33v,
-            fieldname TYPE string,
-            subshlp TYPE string,
-            subfield TYPE string,
-           END OF ty_dd33v.
-
       ls_dd30v = lt_dd30v_tab[ 1 ].
       ls_search_help_desc-dd30v-as4user = ls_dd30v-as4user.
       ls_search_help_desc-dd30v-as4date = ls_dd30v-as4date.
@@ -2432,6 +2459,59 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       REPLACE ALL OCCURRENCES OF ',' IN ev_filecontent WITH |,{ CL_ABAP_CHAR_UTILITIES=>CR_LF }|.
 
       SPLIT ev_filecontent AT CL_ABAP_CHAR_UTILITIES=>CR_LF INTO TABLE et_filecontent.
+
+      " align with GUI_DOWNLOAD which adds a blank line
+      ev_filecontent = ev_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
+
+      rv_success = abap_true.
+
+  ENDMETHOD.
+
+
+  METHOD GET_XSLT_CONTENT.
+
+      DATA lv_no_release_transformation TYPE svrs_bool.
+      DATA lv_info_line TYPE abaptext-line.
+      DATA smodilog_new TYPE TABLE OF smodilog.
+      DATA smodisrc_new TYPE TABLE OF smodisrc.
+      DATA lt_o2xattr_tab TYPE TABLE OF O2XSLTATTR.
+      DATA lt_o2p_tab TYPE TABLE OF O2PAGELINE.
+      DATA lt_o2xtext_tab TYPE TABLE OF O2XSLTTEXT.
+
+      IF iv_logdest = space OR iv_logdest = 'NONE'.
+          lv_no_release_transformation = abap_true.
+      ELSE.
+          lv_no_release_transformation = abap_false.
+      ENDIF.
+
+      CALL FUNCTION 'SVRS_GET_VERSION_XSLT_40'
+          EXPORTING
+              destination                  = ''
+              object_name                  = iv_objname
+              versno                       = iv_version
+              iv_no_release_transformation = lv_no_release_transformation
+          IMPORTING
+              info_line                    = lv_info_line
+          TABLES
+              vsmodisrc                    = smodisrc_new
+              xsatt_tab                    = lt_o2xattr_tab
+              xssrc_tab                    = lt_o2p_tab
+              xstxt_tab                    = lt_o2xtext_tab
+              mdlog_tab                    = smodilog_new
+          EXCEPTIONS
+              no_version                   = 1
+              OTHERS                       = 2.
+      IF sy-subrc <> 0.
+          me->write_telemetry( iv_message = |GET_XSLT_CONTENT fails in fetching content lines for { iv_objname } version { iv_version }| ).
+          rv_success = abap_false.
+          RETURN.
+      ENDIF.
+
+      LOOP AT lt_o2p_tab ASSIGNING FIELD-SYMBOL(<fs>).
+        APPEND <fs>-line TO et_filecontent.
+      ENDLOOP.
+
+      ev_filecontent = concat_lines_of( table = et_filecontent sep = CL_ABAP_CHAR_UTILITIES=>CR_LF ).
 
       " align with GUI_DOWNLOAD which adds a blank line
       ev_filecontent = ev_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
@@ -2856,6 +2936,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     SELECT SINGLE ltext FROM t52cc_t INTO @lv_ltext WHERE sname = @iv_schemaname.   "#EC WARNOK "#EC CI_SGLSELECT
 
     " meta data for this schema, don't want to bother to add an additional XML/JSON description file
+    APPEND '* Schema header part is auto generated and not part of engineer changes.' TO et_filecontent.
     APPEND |* Schema                : { iv_schemaname }| TO et_filecontent.
     APPEND |* Description           : { lv_ltext }| TO et_filecontent.
     APPEND |* Executable            : { ls_desc-execu }| TO et_filecontent.
@@ -2996,6 +3077,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     SELECT SINGLE ltext FROM t52ce_t INTO @lv_ltext WHERE cname = @iv_pcrname AND sprsl = @c_en.
 
     " meta data for this PCR, don't want to bother to add an additional XML/JSON description file
+    APPEND '* PCR header part is auto generated and not part of engineer changes.' TO et_filecontent.
     APPEND |* PCR                   : { iv_pcrname }| TO et_filecontent.
     APPEND |* Description           : { lv_ltext }| TO et_filecontent.
     APPEND |* Country Grouping      : { lv_cnt }| TO et_filecontent.
@@ -3100,6 +3182,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     " write file header for table and fields
     APPEND 'Table header part is auto generated and not part of engineer changes to the row(s).' TO abaptext.
+    APPEND 'Field marked with X is key field.' TO abaptext.
     APPEND |Table { iv_tabname }: { ev_desc-dd02v-ddtext }| TO abaptext.
     APPEND |Changed in TR { iv_request-h-trkorr } at { iv_request-h-as4date } { iv_request-h-as4time }| TO abaptext.
 
@@ -3115,7 +3198,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             lv_field = '                                :'.
             lv_field+0(lv_strlen) = wafield-fieldname.
             lv_field_desc = wafield-ddtext.
-            APPEND |    { lv_field } { lv_field_desc }| TO abaptext.
+            APPEND |    { lv_field } { wafield-keyflag } { lv_field_desc }| TO abaptext.
         ENDLOOP.
         APPEND '' TO abaptext.
     ENDIF.
@@ -3800,11 +3883,28 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                 cht_objversions = cht_objversions
                  ).
     ELSEIF iv_objtype = 'VIEW' OR iv_objtype = 'VIED'.
-        " data table case
+        " view case
         rv_success = me->get_versions_no_helper(
             EXPORTING
                 iv_objname = iv_objname
                 iv_objtype = 'VIED'
+                iv_mode = iv_mode
+                iv_trid = iv_trid
+                iv_date = iv_date
+                iv_time = iv_time
+            IMPORTING
+                ev_version_no = ev_version_no
+                ev_versno = lv_versno
+            CHANGING
+                cht_vers = lt_vers
+                cht_objversions = cht_objversions
+                 ).
+    ELSEIF iv_objtype = 'XSLT'.
+        " view case
+        rv_success = me->get_versions_no_helper(
+            EXPORTING
+                iv_objname = iv_objname
+                iv_objtype = 'XSLT'
                 iv_mode = iv_mode
                 iv_trid = iv_trid
                 iv_date = iv_date
