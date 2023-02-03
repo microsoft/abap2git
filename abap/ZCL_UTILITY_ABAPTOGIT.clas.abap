@@ -4,11 +4,12 @@
 " Multiple SAP systems in the landscape of a service line will share the same Git repo
 " in respective branches
 " Following ABAP objects are included in sync-ing:
-" Class, Function Module, Program, Include, Test Class, Interface,
-" Enhancement Object (hook implementation, class), Data Table,
+" Code: Class, Function Module, Program, Include, Test Class, Interface,
+" Enhancement Object (hook implementation, class), Transformation,
+" Dictionary: Data Table, Data Element, Domain, Lock Object, Search Help, Table Type, View
 " HR/payroll schema/PCR, configuration changes.
 " Following ABAP objects are not yet included in sync-ing:
-" Data dictionary objects (others), enhancement objects (others) and other objects.
+" Data dictionary objects (others), SAPScript, enhancement objects (others) and other objects.
 " Deleted objects are not sync-ed since it's not found which package it was in.
 " Two modes are suggested in sync-ing to Git repo:
 " 1. Latest version mode, where latest version of an ABAP object, if any, is valued while
@@ -36,7 +37,8 @@ PUBLIC SECTION.
     " constructor
     " io_objtelemetry - class object for telemetry
     " iv_methtelemetry - method name for telemetry
-    " for telemetry, the method will be invoked with parameters iv_message as string (for message content) and iv_kind as string (for category)
+    " for telemetry, the method will be invoked with parameters
+    " iv_message as string (for message content) and iv_kind as string (for category)
     METHODS constructor
         IMPORTING
             io_objtelemetry     TYPE REF TO object OPTIONAL
@@ -168,7 +170,7 @@ PROTECTED SECTION.
 
 PRIVATE SECTION.
 
-    CONSTANTS c_delim TYPE string VALUE '\\'.
+    CONSTANTS c_delim TYPE string VALUE '\'.
 
     " max difference in seconds for an imported TR to date time of now
     CONSTANTS c_importtr_diff_gap TYPE i VALUE 30.
@@ -179,6 +181,7 @@ PRIVATE SECTION.
             obj_type    TYPE trobjtype,
             obj_type2   TYPE trobjtype,
             fugr_name   TYPE sobj_name,
+            devclass    TYPE devclass,
            END OF ts_code_object.
 
     " helper objects for ADO and TR operations
@@ -314,7 +317,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     IF lv_sync_status-mode = ZCL_UTILITY_ABAPTOGIT_TR=>c_active_version.
         me->write_telemetry( iv_message = |branch { iv_branch } is sync-ed in active mode| ).
         rv_success = abap_false.
-        EXIT.
+        RETURN.
     ENDIF.
 
     " fetch TR IDs to sync since last one
@@ -401,6 +404,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lt_stats TYPE TABLE OF string INITIAL SIZE 0.
     DATA lv_insertions TYPE i.
     DATA lv_deletions TYPE i.
+    DATA lv_tables TYPE i.
+    DATA lv_rows TYPE i.
 
     rv_success = abap_true.
 
@@ -412,10 +417,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             et_trids = lt_trids
              ).
 
-    APPEND |System,TR,User,Date,Time,Insertions,Deletions| TO lt_stats.
+    APPEND |System,User,TR,Date,Time,Insertions,Deletions,Tables,Rows| TO lt_stats.
 
     LOOP AT lt_trids INTO DATA(wa_trid).
-        CLEAR: lt_commit_objects, lv_insertions, lv_deletions.
+        CLEAR: lt_commit_objects, lv_insertions, lv_deletions, lv_tables, lv_rows.
         me->oref_tr->get_tr_commit_objects(
             EXPORTING
                 iv_trid = wa_trid-trid
@@ -427,10 +432,14 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         LOOP AT lt_commit_objects INTO DATA(wa_co).
             lv_insertions = lv_insertions + wa_co-insertions.
             lv_deletions = lv_deletions + wa_co-deletions.
+            lv_tables = lv_tables + wa_co-tables.
+            IF wa_co-rows > 0.
+                lv_rows = lv_rows + wa_co-rows - 1.
+            ENDIF.
         ENDLOOP.
         DATA(lv_date) = |{ wa_trid-dat+4(2) }/{ wa_trid-dat+6(2) }/{ wa_trid-dat(4) }|.
         DATA(lv_time) = |{ wa_trid-tim(2) }:{ wa_trid-tim+2(2) }:{ wa_trid-tim+4(2) }|.
-        APPEND |{ sy-sysid },{ wa_trid-user },{ wa_trid-trid },{ lv_date },{ lv_time },{ lv_insertions },{ lv_deletions }| TO lt_stats.
+        APPEND |{ sy-sysid },{ wa_trid-user },{ wa_trid-trid },{ lv_date },{ lv_time },{ lv_insertions },{ lv_deletions },{ lv_tables },{ lv_rows }| TO lt_stats.
     ENDLOOP.
 
     CALL FUNCTION 'GUI_DOWNLOAD'
@@ -503,7 +512,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             IMPORTING
                 et_filecontent = lt_filecontent
                  ).
-        SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'SCHE' AND ponam = @lv_schpcrname AND pattr = 'PCL'.
+        SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'SCHE' AND ponam = @lv_schpcrname AND pattr = 'PCL'.  "#EC WARNOK
 
         lv_commit_object-objname = wacode-obj_name.
         lv_commit_object-objtype = 'PSCC'.
@@ -524,7 +533,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 EXPORTING
                     dirname = lv_folder
                 EXCEPTIONS
-                    OTHERS = 1.
+                    OTHERS = 1. "#EC FB_RC
+            IF sy-subrc <> 0.
+                " folder may exist
+            ENDIF.
         ENDIF.
         lv_path = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }{ c_delim }{ lv_code_name }|.
         CALL FUNCTION 'GUI_DOWNLOAD'
@@ -559,7 +571,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             IMPORTING
                 et_filecontent = lt_filecontent
                  ).
-        SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'CYCL' AND ponam = @lv_schpcrname AND pattr = 'PCL'.
+        SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'CYCL' AND ponam = @lv_schpcrname AND pattr = 'PCL'.  "#EC WARNOK
 
         lv_commit_object-objname = wacode-obj_name.
         lv_commit_object-objtype = 'PCYC'.
@@ -580,7 +592,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 EXPORTING
                     dirname = lv_folder
                 EXCEPTIONS
-                    OTHERS = 1.
+                    OTHERS = 1. "#EC FB_RC
+            IF sy-subrc <> 0.
+                " folder may exist
+            ENDIF.
         ENDIF.
         lv_path = |{ lv_basefolder }{ ZCL_UTILITY_ABAPTOGIT_TR=>c_schemapcr }{ c_delim }{ lv_code_name }|.
         CALL FUNCTION 'GUI_DOWNLOAD'
@@ -604,6 +619,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
   METHOD GET_PACKAGE_CODES.
 
     DATA wacode TYPE ts_code_object.
+    DATA lv_trid TYPE trkorr.
+    DATA lv_subpackage TYPE devclass.
     DATA lt_codes TYPE STANDARD TABLE OF ts_code_object.
     DATA lt_fmcodes TYPE STANDARD TABLE OF ts_code_object.
     DATA lt_fgfmcodes TYPE STANDARD TABLE OF ts_code_object.
@@ -613,6 +630,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lv_objtype2 TYPE versobjtyp.
     DATA lv_fugrname TYPE versobjnam.
     DATA lv_basefolder TYPE string.
+    DATA lt_subpackages TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_package.
     DATA lt_filecontent TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_abaptext.
     DATA lv_filecontent TYPE string.
     DATA lt_tclsfilecontent TYPE ZCL_UTILITY_ABAPTOGIT_TR=>tty_abaptext.
@@ -635,7 +653,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     IF iv_uptotrid IS SUPPLIED AND iv_mode <> ZCL_UTILITY_ABAPTOGIT_TR=>c_latest_version.
         me->write_telemetry( iv_message = |latest version required for up-to TR ID supplied| ).
         rv_success = abap_false.
-        EXIT.
+        RETURN.
     ENDIF.
 
     IF iv_folder NP '*\'.
@@ -644,19 +662,18 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         lv_basefolder = iv_folder.
     ENDIF.
 
-    " root folder for a package like \src\<branch name>\
-    lv_folder = |{ lv_basefolder }{ iv_package }{ c_delim }|.
-    lv_codefolder = lv_folder.
-    CALL FUNCTION 'GUI_CREATE_DIRECTORY'
+    " find all sub packages including the package to filter in
+    me->oref_tr->get_subpackages(
         EXPORTING
-            dirname = lv_folder
-        EXCEPTIONS
-            FAILED = 1.
-    IF sy-subrc <> 0.
-        me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to create folder { lv_folder }| ).
-    ENDIF.
+            iv_package = iv_package
+        IMPORTING
+            et_packages = lt_subpackages
+             ).
 
-    SELECT obj_name, object, object, ' ' INTO TABLE @lt_codes FROM tadir WHERE devclass = @iv_package AND pgmid = 'R3TR'.
+    LOOP AT lt_subpackages INTO lv_subpackage.
+        SELECT obj_name, object, object, ' ', @lv_subpackage APPENDING TABLE @lt_codes FROM tadir
+            WHERE devclass = @lv_subpackage AND pgmid = 'R3TR'.   "#EC CI_SGLSELECT
+    ENDLOOP.
 
     " collect FMs/includes in function groups into list of code objects to download
     LOOP AT lt_codes INTO wacode.
@@ -666,12 +683,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             " find function modules in the function group
             DATA(pname_filter) = 'SAPL' && lv_objname.
             CLEAR lt_fgfmcodes.
-            SELECT funcname, 'FUNC', 'FUNC', @lv_objname INTO TABLE @lt_fgfmcodes FROM tfdir WHERE pname = @pname_filter.
+            SELECT funcname, 'FUNC', 'FUNC', @lv_objname, @wacode-devclass INTO TABLE @lt_fgfmcodes FROM tfdir WHERE pname = @pname_filter.   "#EC CI_SGLSELECT
             APPEND LINES OF lt_fgfmcodes TO lt_fmcodes.
             " find includes in the function group
             pname_filter = 'L' && lv_objname && '%'.
             CLEAR lt_fgfmcodes.
-            SELECT name, 'REPS', 'FUNC', @lv_objname INTO TABLE @lt_fgfmcodes FROM trdir WHERE name LIKE @pname_filter.
+            SELECT name, 'REPS', 'FUNC', @lv_objname, @wacode-devclass INTO TABLE @lt_fgfmcodes FROM trdir WHERE name LIKE @pname_filter. "#EC CI_SGLSELECT
             APPEND LINES OF lt_fgfmcodes TO lt_fmcodes.
         ENDIF.
     ENDLOOP.
@@ -682,7 +699,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         IF sy-subrc <> 0.
             me->write_telemetry( iv_message = |{ iv_uptotrid } is not a released workbench transport request| ).
             rv_success = abap_false.
-            EXIT.
+            RETURN.
         ENDIF.
         SELECT SINGLE as4time INTO lv_tim FROM e070 WHERE trkorr = iv_uptotrid.
     ENDIF.
@@ -709,11 +726,13 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
         IF iv_uptotrid IS SUPPLIED.
             " use date/time of up-to TR ID to constrain version to select if latest version
+            lv_trid = iv_uptotrid.
             lv_success = me->oref_tr->get_versions_no(
                 EXPORTING
                     iv_objname = lv_objname3
                     iv_objtype = lv_objtype
                     iv_mode = iv_mode
+                    iv_trid = lv_trid
                     iv_date = lv_dat
                     iv_time = lv_tim
                     iv_findtest = abap_true
@@ -741,6 +760,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         CHECK lines( lt_objversions ) > 0.
 
         IF lv_objtype = 'TABL' OR lv_objtype = 'TABD'.
+
             CLEAR lt_filecontent.
             lv_success = me->oref_tr->build_data_table_content(
                 EXPORTING
@@ -755,7 +775,128 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 rv_success = abap_false.
                 CONTINUE.
             ENDIF.
+
+        ELSEIF lv_objtype = 'DTEL' OR lv_objtype = 'DTED'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_dataelement_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
+        ELSEIF lv_objtype = 'DOMA' OR lv_objtype = 'DOMD'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_domain_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
+        ELSEIF lv_objtype = 'ENQU' OR lv_objtype = 'ENQD'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_lockobject_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
+        ELSEIF lv_objtype = 'SHLP' OR lv_objtype = 'SHLD'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_searchhelp_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
+        ELSEIF lv_objtype = 'TTYP' OR lv_objtype = 'TTYD'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_tabletype_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
+        ELSEIF lv_objtype = 'VIEW' OR lv_objtype = 'VIED'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_view_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
+        ELSEIF lv_objtype = 'XSLT'.
+
+            CLEAR lt_filecontent.
+            lv_success = me->oref_tr->get_xslt_content(
+                EXPORTING
+                    iv_objname = lt_objversions[ 1 ]-objname
+                    iv_version = lt_objversions[ 1 ]-objversionno
+                IMPORTING
+                    ev_filecontent = lv_filecontent
+                    et_filecontent = lt_filecontent
+                     ).
+            IF lv_success <> abap_true.
+                me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+                rv_success = abap_false.
+                CONTINUE.
+            ENDIF.
+
         ELSE.
+
             " construct object content (and test class content if any) as source code lines
             CLEAR lt_filecontent.
             CLEAR lt_tclsfilecontent.
@@ -775,10 +916,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 rv_success = abap_false.
                 CONTINUE.
             ENDIF.
+
         ENDIF.
 
         CLEAR lv_subc.
-        SELECT SINGLE subc FROM reposrc INTO @lv_subc WHERE progname = @lv_objname3.
+        SELECT SINGLE subc FROM reposrc INTO @lv_subc WHERE progname = @lv_objname3.    "#EC WARNOK
 
         " save the object content to local disk file
         lv_commit_object-objname = lv_objname3.
@@ -786,6 +928,17 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         lv_commit_object-objtype2 = lv_objtype2.
         lv_commit_object-fugr = lv_fugrname.
         lv_commit_object-subc = lv_subc.
+        lv_commit_object-devclass = wacode-devclass.
+        lv_codefolder = |{ lv_basefolder }{ wacode-devclass }{ c_delim }|.
+        lv_folder = lv_codefolder.
+        CALL FUNCTION 'GUI_CREATE_DIRECTORY'
+            EXPORTING
+                dirname = lv_folder
+            EXCEPTIONS
+                OTHERS = 1.
+        IF sy-subrc <> 0.
+            " folder may exist
+        ENDIF.
         lv_code_name = ZCL_UTILITY_ABAPTOGIT_ADO=>build_code_name(
             EXPORTING
                 iv_commit_object = lv_commit_object
@@ -802,9 +955,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 EXPORTING
                     dirname = lv_folder
                 EXCEPTIONS
-                    OTHERS = 1.
+                    OTHERS = 1. "#EC FB_RC
+            IF sy-subrc <> 0.
+                " folder may exist
+            ENDIF.
         ENDIF.
-        lv_path = |{ lv_basefolder }{ iv_package }{ c_delim }{ lv_code_name }|.
+        lv_path = |{ lv_basefolder }{ wacode-devclass }{ c_delim }{ lv_code_name }|.
         CALL FUNCTION 'GUI_DOWNLOAD'
             EXPORTING
                 filename = lv_path
@@ -840,9 +996,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                     EXPORTING
                         dirname = lv_folder
                     EXCEPTIONS
-                        OTHERS = 1.
+                        OTHERS = 1. "#EC FB_RC
+                IF sy-subrc <> 0.
+                    " folder may exist
+                ENDIF.
             ENDIF.
-            lv_path = |{ lv_basefolder }{ iv_package }{ c_delim }{ lv_code_name }|.
+            lv_path = |{ lv_basefolder }{ lv_subpackage }{ c_delim }{ lv_code_name }|.
             CALL FUNCTION 'GUI_DOWNLOAD'
                 EXPORTING
                     filename = lv_path
@@ -870,7 +1029,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     IF iv_uptotrid IS SUPPLIED AND iv_mode <> ZCL_UTILITY_ABAPTOGIT_TR=>c_latest_version.
         me->write_telemetry( iv_message = |latest version required for up-to TR ID supplied| ).
         rv_success = abap_false.
-        EXIT.
+        RETURN.
     ENDIF.
 
     IF iv_folder NP '*\'.
@@ -937,7 +1096,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     IF iv_uptotrid IS SUPPLIED AND iv_mode <> ZCL_UTILITY_ABAPTOGIT_TR=>c_latest_version.
         me->write_telemetry( iv_message = |latest version required for up-to TR ID supplied| ).
         rv_success = abap_false.
-        EXIT.
+        RETURN.
     ENDIF.
 
     IF iv_folder NP '*\'.
@@ -950,7 +1109,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lt_packages TYPE STANDARD TABLE OF devclass.
 
     " fetch customization packages with initial Y or Z
-    SELECT devclass INTO TABLE lt_packages FROM tdevc WHERE devclass LIKE 'Z%' OR devclass LIKE 'Y%'.
+    SELECT devclass INTO TABLE lt_packages FROM tdevc WHERE devclass LIKE 'Z%' OR devclass LIKE 'Y%'.   "#EC CI_SGLSELECT
 
     " save objects in each package collected under the folder named as package name like \src\<package name>\
     LOOP AT lt_packages INTO DATA(wa).
