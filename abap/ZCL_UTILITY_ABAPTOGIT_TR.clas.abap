@@ -1923,6 +1923,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           rv_success = abap_false.
           RETURN.
       ENDIF.
+      IF lines( lt_dd04v_tab ) = 0.
+          me->write_telemetry( iv_message = |GET_DATAELEMENT_CONTENT fetched zero content lines for { iv_objname } version { iv_version }| ).
+          rv_success = abap_false.
+          RETURN.
+      ENDIF.
 
       ls_dd04v = lt_dd04v_tab[ 1 ].
       ls_data_element_desc-as4user = ls_dd04v-as4user.
@@ -1931,7 +1936,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       ls_data_element_desc-rollname = ls_dd04v-rollname.
       ls_data_element_desc-ddlanguage = ls_dd04v-ddlanguage.
       ls_data_element_desc-domname = ls_dd04v-domname.
-      ls_data_element_desc-ddtext = lt_dd04tv_tab[ ddlanguage = 'E' ]-ddtext.
+      IF line_exists( lt_dd04tv_tab[ ddlanguage = 'E' ] ).
+          ls_data_element_desc-ddtext = lt_dd04tv_tab[ ddlanguage = 'E' ]-ddtext.
+      ELSE.
+          ls_data_element_desc-ddtext = ls_dd04v-ddtext.
+      ENDIF.
       ls_data_element_desc-datatype = ls_dd04v-datatype.
       ls_data_element_desc-leng = ls_dd04v-leng.
       ls_data_element_desc-decimals = ls_dd04v-decimals.
@@ -2008,6 +2017,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           rv_success = abap_false.
           RETURN.
       ENDIF.
+      IF lines( lt_dd01v_tab ) = 0.
+          me->write_telemetry( iv_message = |GET_DOMAIN_CONTENT fetched zero content lines for { iv_objname } version { iv_version }| ).
+          rv_success = abap_false.
+          RETURN.
+      ENDIF.
 
       ls_dd01v = lt_dd01v_tab[ 1 ].
       ls_domain_desc-as4user = ls_dd01v-as4user.
@@ -2015,7 +2029,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       ls_domain_desc-as4time = ls_dd01v-as4time.
       ls_domain_desc-domname = ls_dd01v-domname.
       ls_domain_desc-ddlanguage = ls_dd01v-ddlanguage.
-      ls_domain_desc-ddtext = lt_dd01tv_tab[ ddlanguage = 'E' ]-ddtext.
+      IF line_exists( lt_dd01tv_tab[ ddlanguage = 'E' ] ).
+          ls_domain_desc-ddtext = lt_dd01tv_tab[ ddlanguage = 'E' ]-ddtext.
+      ELSE.
+          ls_domain_desc-ddtext = ls_dd01v-ddtext.
+      ENDIF.
       ls_domain_desc-datatype = ls_dd01v-datatype.
       ls_domain_desc-leng = ls_dd01v-leng.
       ls_domain_desc-decimals = ls_dd01v-decimals.
@@ -2087,6 +2105,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           rv_success = abap_false.
           RETURN.
       ENDIF.
+      IF lines( lt_dd25v_tab ) = 0.
+          me->write_telemetry( iv_message = |GET_LOCKOBJECT_CONTENT fetched zero content lines for { iv_objname } version { iv_version }| ).
+          rv_success = abap_false.
+          RETURN.
+      ENDIF.
 
       ls_dd25v = lt_dd25v_tab[ 1 ].
       ls_lock_object_desc-dd25v-as4user = ls_dd25v-as4user.
@@ -2094,8 +2117,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       ls_lock_object_desc-dd25v-as4time = ls_dd25v-as4time.
       ls_lock_object_desc-dd25v-viewname = ls_dd25v-viewname.
       ls_lock_object_desc-dd25v-ddlanguage = ls_dd25v-ddlanguage.
-      ls_lock_object_desc-dd25v-ddtext = lt_dd25tv_tab[ ddlanguage = 'E' ]-ddtext.
-
+      IF line_exists( lt_dd25tv_tab[ ddlanguage = 'E' ] ).
+          ls_lock_object_desc-dd25v-ddtext = lt_dd25tv_tab[ ddlanguage = 'E' ]-ddtext.
+      ELSE.
+          ls_lock_object_desc-dd25v-ddtext = ls_dd25v-ddtext.
+      ENDIF.
       LOOP AT lt_dd26v_tab INTO DATA(wa26).
           CLEAR ls_dd26v.
           ls_dd26v-tabname = wa26-tabname.
@@ -2187,6 +2213,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           rv_success = abap_false.
           RETURN.
       ENDIF.
+      IF lines( lt_dd30v_tab ) = 0.
+          me->write_telemetry( iv_message = |GET_SEARCHHELP_CONTENT fetched zero content lines for { iv_objname } version { iv_version }| ).
+          rv_success = abap_false.
+          RETURN.
+      ENDIF.
 
       ls_dd30v = lt_dd30v_tab[ 1 ].
       ls_search_help_desc-dd30v-as4user = ls_dd30v-as4user.
@@ -2197,7 +2228,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       ls_search_help_desc-dd30v-issimple = ls_dd30v-issimple.
       ls_search_help_desc-dd30v-selmethod = ls_dd30v-selmethod.
       ls_search_help_desc-dd30v-dialogtype = ls_dd30v-dialogtype.
-      ls_search_help_desc-dd30v-ddtext = lt_dd30tv_tab[ ddlanguage = 'E' ]-ddtext.
+      IF line_exists( lt_dd30tv_tab[ ddlanguage = 'E' ] ).
+          ls_search_help_desc-dd30v-ddtext = lt_dd30tv_tab[ ddlanguage = 'E' ]-ddtext.
+      ELSE.
+          ls_search_help_desc-dd30v-ddtext = ls_dd30v-ddtext.
+      ENDIF.
 
       LOOP AT lt_dd31v_tab INTO DATA(wa31).
           CLEAR ls_dd31v.
@@ -2295,6 +2330,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           rv_success = abap_false.
           RETURN.
       ENDIF.
+      IF lines( lt_dd40v_tab ) = 0.
+          me->write_telemetry( iv_message = |GET_TABLETYPE_CONTENT fetched zero content lines for { iv_objname } version { iv_version }| ).
+          rv_success = abap_false.
+          RETURN.
+      ENDIF.
 
       ls_dd40v = lt_dd40v_tab[ 1 ].
       ls_table_type_desc-dd40v-as4user = ls_dd40v-as4user.
@@ -2302,7 +2342,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       ls_table_type_desc-dd40v-as4time = ls_dd40v-as4time.
       ls_table_type_desc-dd40v-typename = ls_dd40v-typename.
       ls_table_type_desc-dd40v-ddlanguage = ls_dd40v-ddlanguage.
-      ls_table_type_desc-dd40v-ddtext = lt_dd40tv_tab[ ddlanguage = 'E' ]-ddtext.
+      IF line_exists( lt_dd40tv_tab[ ddlanguage = 'E' ] ).
+          ls_table_type_desc-dd40v-ddtext = lt_dd40tv_tab[ ddlanguage = 'E' ]-ddtext.
+      ELSE.
+          ls_table_type_desc-dd40v-ddtext = ls_dd40v-ddtext.
+      ENDIF.
       ls_table_type_desc-dd40v-datatype = ls_dd40v-datatype.
       ls_table_type_desc-dd40v-rowtype = ls_dd40v-rowtype.
       ls_table_type_desc-dd40v-rowkind = ls_dd40v-rowkind.
@@ -2399,6 +2443,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           rv_success = abap_false.
           RETURN.
       ENDIF.
+      IF lines( lt_dd25v_tab ) = 0.
+          me->write_telemetry( iv_message = |GET_VIEW_CONTENT fetched zero content lines for { iv_objname } version { iv_version }| ).
+          rv_success = abap_false.
+          RETURN.
+      ENDIF.
 
       ls_dd25v = lt_dd25v_tab[ 1 ].
       ls_view_desc-dd25v-as4user = ls_dd25v-as4user.
@@ -2406,7 +2455,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       ls_view_desc-dd25v-as4time = ls_dd25v-as4time.
       ls_view_desc-dd25v-viewname = ls_dd25v-viewname.
       ls_view_desc-dd25v-ddlanguage = ls_dd25v-ddlanguage.
-      ls_view_desc-dd25v-ddtext = lt_dd25tv_tab[ ddlanguage = 'E' ]-ddtext.
+      IF line_exists( lt_dd25tv_tab[ ddlanguage = 'E' ] ).
+          ls_view_desc-dd25v-ddtext = lt_dd25tv_tab[ ddlanguage = 'E' ]-ddtext.
+      ELSE.
+          ls_view_desc-dd25v-ddtext = ls_dd25v-ddtext.
+      ENDIF.
 
       LOOP AT lt_dd26v_tab INTO DATA(wa26).
           CLEAR ls_dd26v.
