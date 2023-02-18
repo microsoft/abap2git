@@ -54,6 +54,7 @@ PUBLIC SECTION.
             user TYPE string,
             dat  TYPE d,
             tim  TYPE t,
+            func TYPE string,
            END OF ty_trid.
     TYPES: tty_trids TYPE TABLE OF ty_trid.
 
@@ -200,6 +201,10 @@ PRIVATE SECTION.
                c_head                       TYPE string VALUE 'refs/heads/',
                c_folder_structure_eclipse   TYPE string VALUE 'eclipse',
                c_folder_structure_flat      TYPE string VALUE 'flat'.
+
+    CONSTANTS c_custtrfunc TYPE string VALUE 'W'.
+    CONSTANTS c_wkbtrfunc TYPE string VALUE 'K'.
+    CONSTANTS c_relests TYPE string VALUE 'R'.
 
     " credential for ADO REST APIs
     DATA username TYPE string.
@@ -745,15 +750,15 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
         DATA lv_tim TYPE t.
         SELECT SINGLE as4date INTO lv_dat FROM e070 WHERE trkorr = iv_fromtrid.
         SELECT SINGLE as4time INTO lv_tim FROM e070 WHERE trkorr = iv_fromtrid.
-        SELECT trkorr, as4user, as4date, as4time INTO TABLE @et_trids FROM e070
-            WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R' AND ( as4date > @lv_dat OR ( as4date = @lv_dat AND as4time > @lv_tim ) ).
+        SELECT trkorr, as4user, as4date, as4time, trfunction INTO TABLE @et_trids FROM e070
+            WHERE ( trfunction = @c_custtrfunc OR trfunction = @c_wkbtrfunc ) AND trstatus = @c_relests AND ( as4date > @lv_dat OR ( as4date = @lv_dat AND as4time > @lv_tim ) ).
         SORT et_trids BY dat tim.
     ELSE.
         " fetch latest released TR (workbench or customizing)
         DATA maxdat TYPE d.
-        SELECT MAX( as4date ) FROM e070 INTO maxdat WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R'.
-        SELECT trkorr, as4user, as4date, as4time FROM e070 INTO TABLE @et_trids
-            WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R' AND as4date = @maxdat.
+        SELECT MAX( as4date ) FROM e070 INTO maxdat WHERE ( trfunction = c_custtrfunc OR trfunction = c_wkbtrfunc ) AND trstatus = c_relests.
+        SELECT trkorr, as4user, as4date, as4time, trfunction FROM e070 INTO TABLE @et_trids
+            WHERE ( trfunction = @c_custtrfunc OR trfunction = @c_wkbtrfunc ) AND trstatus = @c_relests AND as4date = @maxdat.
         IF lines( et_trids ) > 1.
             SORT et_trids BY tim DESCENDING.
             DATA(lv_count) = lines( et_trids ).
@@ -767,7 +772,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
   METHOD GET_TRS_DATERANGE.
 
     SELECT trkorr, as4user, as4date, as4time INTO TABLE @et_trids FROM e070
-        WHERE ( trfunction = 'W' OR trfunction = 'K' ) AND trstatus = 'R' AND as4date >= @iv_fromdat AND as4date <= @iv_todat.
+        WHERE ( trfunction = @c_custtrfunc OR trfunction = @c_wkbtrfunc ) AND trstatus = @c_relests AND as4date >= @iv_fromdat AND as4date <= @iv_todat.
     SORT et_trids BY dat tim.
 
   ENDMETHOD.
@@ -776,7 +781,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
   METHOD GET_WBTRS.
 
     SELECT trkorr INTO TABLE @et_trids FROM e070
-        WHERE trfunction = 'K' AND trstatus = 'R'
+        WHERE trfunction = @c_wkbtrfunc AND trstatus = @c_relests
             AND ( as4date > @iv_fromdat OR ( as4date = @iv_fromdat AND as4time >= @iv_fromtim ) ).
     SORT et_trids BY dat tim.
 
@@ -935,6 +940,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
         rv_success = abap_false.
     ENDTRY.
   ENDMETHOD.
+
 
   METHOD GET_DISPLAYNAME_ADO.
     " https://learn.microsoft.com/en-us/rest/api/azure/devops/ims/identities/read-identities?view=azure-devops-rest-7.1&tabs=HTTP

@@ -140,6 +140,7 @@ PUBLIC SECTION.
     " iv_domain - email domain for TR owner to specify real author of Git commit, blank means not to specify
     " iv_rootfolder - the root folder in Git local clone for ABAP objects to add to, shared by all packages in SAP, case sensitive
     " iv_folder_structure - 'flat' or 'eclipse'
+    " iv_use_englist - engineer allow list file path to filter in customizing TRs, empty means not applicable
     " et_trids - TR IDs inspected regardless Git sync-ed or not
     " et_synctrids - TR IDs Git sync-ed
     METHODS catchup_trs
@@ -149,6 +150,7 @@ PUBLIC SECTION.
             iv_domain           TYPE string DEFAULT ''
             iv_rootfolder       TYPE string DEFAULT '/SRC/'
             iv_folder_structure TYPE string DEFAULT 'eclipse'
+            iv_use_englist      TYPE string DEFAULT ''
         EXPORTING
             et_trids            TYPE tty_trids
             et_synctrids        TYPE tty_trids
@@ -171,6 +173,9 @@ PROTECTED SECTION.
 PRIVATE SECTION.
 
     CONSTANTS c_delim TYPE string VALUE '\'.
+    CONSTANTS c_custtrfunc TYPE string VALUE 'W'.
+    CONSTANTS c_wkbtrfunc TYPE string VALUE 'K'.
+    CONSTANTS c_relests TYPE string VALUE 'R'.
 
     " max difference in seconds for an imported TR to date time of now
     CONSTANTS c_importtr_diff_gap TYPE i VALUE 30.
@@ -320,6 +325,32 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         RETURN.
     ENDIF.
 
+    TYPES: tty_englist TYPE TABLE OF string WITH DEFAULT KEY.
+    TYPES: BEGIN OF ty_engallowlist,
+           allowed_engineers TYPE tty_englist,
+           END OF ty_engallowlist.
+    DATA lv_engallowlist TYPE ty_engallowlist.
+
+    IF iv_use_englist <> ''.
+        lv_itempath = iv_use_englist.
+
+        " fetch content of engineer allow list file
+        rv_success = me->oref_ado->get_item_ado(
+            EXPORTING
+                iv_branch = iv_branch
+                iv_itempath = lv_itempath
+            IMPORTING
+                ev_content = lv_content
+                 ).
+        CHECK rv_success = abap_true.
+        /ui2/cl_json=>deserialize(
+            EXPORTING
+                json = lv_content
+            CHANGING
+                data = lv_engallowlist
+                 ).
+    ENDIF.
+
     " fetch TR IDs to sync since last one
     me->oref_ado->get_trs( EXPORTING iv_fromtrid = lv_sync_status-trid IMPORTING et_trids = lt_trids ).
 
@@ -355,6 +386,13 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                 rv_success = abap_true.
                 EXIT.
             ENDIF.
+        ENDIF.
+
+        " apply engineer allow list for TR owners if any
+        IF iv_use_englist <> '' AND NOT line_exists( lv_engallowlist-allowed_engineers[ table_line = watrid-user ] ).
+            me->write_telemetry( iv_message = |TR { watrid-trid } ({ watrid-user }) is not released by engineers in allow list| iv_kind = 'info' ).
+            rv_success = abap_true.
+            CONTINUE.
         ENDIF.
 
         CLEAR lt_commit_objects.
@@ -695,7 +733,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     APPEND LINES OF lt_fmcodes TO lt_codes.
 
     IF iv_uptotrid IS SUPPLIED.
-        SELECT SINGLE as4date INTO lv_dat FROM e070 WHERE trkorr = iv_uptotrid AND trfunction = 'K' AND trstatus = 'R'.
+        SELECT SINGLE as4date INTO lv_dat FROM e070 WHERE trkorr = iv_uptotrid AND trfunction = c_wkbtrfunc AND trstatus = c_relests.
         IF sy-subrc <> 0.
             me->write_telemetry( iv_message = |{ iv_uptotrid } is not a released workbench transport request| ).
             rv_success = abap_false.
