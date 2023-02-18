@@ -319,6 +319,9 @@ PROTECTED SECTION.
 PRIVATE SECTION.
 
     CONSTANTS c_en TYPE spras VALUE 'E'.
+    CONSTANTS c_custtrfunc TYPE string VALUE 'W'.
+    CONSTANTS c_wkbtrfunc TYPE string VALUE 'K'.
+    CONSTANTS c_relests TYPE string VALUE 'R'.
 
     " structure for data table description
     TYPES: BEGIN OF ty_dd02v,
@@ -754,6 +757,14 @@ PRIVATE SECTION.
         CHANGING
             cht_filecontent     TYPE tty_abaptext.
 
+    " get other non-key column values from table
+    METHODS get_nonkey_column_values
+        IMPORTING
+            iv_data_table_desc  TYPE ty_data_table_desc
+            iv_criteria         TYPE string
+        EXPORTING
+            abaptext            TYPE tty_abaptext.
+
     " get methods of a class object
     METHODS get_class_methods
         IMPORTING
@@ -925,14 +936,14 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     ENDIF.
 
     " only support workbench/customizing TR
-    IF ld_cs_request-h-trfunction <> 'K' AND ld_cs_request-h-trfunction <> 'W'.
+    IF ld_cs_request-h-trfunction <> c_wkbtrfunc AND ld_cs_request-h-trfunction <> c_custtrfunc.
         me->write_telemetry( iv_message = |GET_TR_COMMIT_OBJECTS meets request type '{ ld_cs_request-h-trfunction }'| ).
         rv_success = abap_false.
         RETURN.
     ENDIF.
 
     " only support released one
-    IF ld_cs_request-h-trstatus <> 'R'.
+    IF ld_cs_request-h-trstatus <> c_relests.
         me->write_telemetry( iv_message = |GET_TR_COMMIT_OBJECTS meets request status '{ ld_cs_request-h-trstatus }'| ).
         rv_success = abap_false.
         RETURN.
@@ -1766,7 +1777,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             ENDIF.
             " align with GUI_DOWNLOAD which adds a blank line
             lv_filecontent = lv_filecontent && CL_ABAP_CHAR_UTILITIES=>CR_LF.
-         ENDIF.
+        ENDIF.
 
         IF lv_append = abap_true.
             <fs_commit_object>-rows = lv_row.
@@ -4472,6 +4483,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lv_value TYPE string.
     DATA lv_leng TYPE i.
     DATA lv_strlen TYPE i.
+    DATA lt_conditions TYPE TABLE OF string.
+    DATA lv_criteria TYPE string.
 
     LOOP AT iv_data_table_desc-dd03v INTO wafield WHERE keyflag = abap_true.
         CLEAR lv_value.
@@ -4507,10 +4520,81 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             ENDIF.
         ENDIF.
         APPEND |    { lv_field } { lv_value }| TO cht_filecontent.
+        APPEND |{ wafield-fieldname } = '{ lv_value }'| TO lt_conditions.
     ENDLOOP.
+
+    lv_criteria = concat_lines_of( table = lt_conditions sep = ' AND ' ).
+
+    me->get_nonkey_column_values(
+        EXPORTING
+            iv_data_table_desc = iv_data_table_desc
+            iv_criteria = lv_criteria
+        IMPORTING
+            abaptext = cht_filecontent
+             ).
 
   ENDMETHOD.
 
+
+  METHOD GET_NONKEY_COLUMN_VALUES.
+
+    DATA lt_entry_tab TYPE TABLE OF line.
+    DATA wafield TYPE ty_data_table_field.
+    DATA lv_field(33) TYPE c.
+    DATA lv_strlen TYPE i.
+    DATA lv_fieldname TYPE string.
+    FIELD-SYMBOLS:
+        <fs_table> TYPE ANY TABLE,
+        <fs_struct> TYPE ANY,
+        <fs_field> TYPE ANY.
+    DATA: lo_typedesc    TYPE REF TO cl_abap_typedescr,
+          lo_tabtype     TYPE REF TO cl_abap_tabledescr,
+          lo_struct_type TYPE REF TO cl_abap_structdescr,
+          lr_data        TYPE REF TO data,
+          lt_comp_tab    TYPE cl_abap_structdescr=>component_table.
+    DATA lv_value TYPE string.
+
+    " prepare for dynamic SQL query for all rows
+    CALL METHOD cl_abap_typedescr=>describe_by_name
+        EXPORTING
+            p_name = iv_data_table_desc-dd02v-tabname
+        RECEIVING
+            p_descr_ref = lo_typedesc
+        EXCEPTIONS
+            TYPE_NOT_FOUND = 1.
+    IF sy-subrc <> 0.
+        me->write_telemetry( iv_message = |GET_CONFIG_TABLE_LINES fails to find type info of { iv_data_table_desc-dd02v-tabname }| ).
+        RETURN.
+    ENDIF.
+
+    lo_struct_type ?= lo_typedesc.
+    lt_comp_tab = lo_struct_type->get_components( ).
+    lo_struct_type = cl_abap_structdescr=>create( lt_comp_tab ).
+    lo_tabtype = cl_abap_tabledescr=>create( lo_struct_type ).
+    CREATE DATA lr_data TYPE HANDLE lo_tabtype.
+    ASSIGN lr_data->* TO <fs_table>.
+
+    " dynamic query for given table name
+    SELECT * FROM (iv_data_table_desc-dd02v-tabname) INTO CORRESPONDING FIELDS OF TABLE <fs_table> UP TO 1 ROWS WHERE (iv_criteria).
+
+    LOOP AT <fs_table> ASSIGNING FIELD-SYMBOL(<fs_row2>).
+        LOOP AT iv_data_table_desc-dd03v INTO wafield WHERE keyflag = abap_false.
+            lv_fieldname = wafield-fieldname.
+            ASSIGN COMPONENT lv_fieldname OF STRUCTURE <fs_row2> TO <fs_field>.
+            IF sy-subrc <> 0.
+                lv_value = ''.
+            ELSE.
+                lv_value = <fs_field>.
+            ENDIF.
+            lv_strlen = strlen( wafield-fieldname ).
+            lv_field = '                                :'.
+            lv_field+0(lv_strlen) = wafield-fieldname.
+            APPEND |    { lv_field } { lv_value }| TO abaptext.
+        ENDLOOP.
+        APPEND '' TO abaptext.
+    ENDLOOP.
+
+  ENDMETHOD.
 
   METHOD GET_PARENTPACKAGES.
 
