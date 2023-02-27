@@ -4520,10 +4520,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             ENDIF.
         ENDIF.
         APPEND |    { lv_field } { lv_value }| TO cht_filecontent.
-        APPEND |{ wafield-fieldname } = '{ lv_value }'| TO lt_conditions.
+        IF wafield-fieldname NA '.&'.
+            APPEND |{ wafield-fieldname } = '{ lv_value }'| TO lt_conditions.
+        ENDIF.
     ENDLOOP.
 
-    lv_criteria = concat_lines_of( table = lt_conditions sep = ' AND ' ).
+    lv_criteria = concat_lines_of( table = lt_conditions sep = ` AND ` ).
 
     me->get_nonkey_column_values(
         EXPORTING
