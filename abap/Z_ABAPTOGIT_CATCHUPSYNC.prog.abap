@@ -48,6 +48,12 @@ FORM f_catchup.
     lo_abaptogit->prepare_landscape_branch( EXPORTING iv_prefix = p_prefix IMPORTING ev_branch = lv_branch ).
     DATA lv_pname TYPE string.
     lv_pname = p_pname.
-    lo_abaptogit->catchup_trs( EXPORTING iv_branch = lv_branch iv_packagenames = lv_pname iv_domain = p_domain iv_folder_structure = p_struct ).
+    lo_abaptogit->catchup_trs(
+        EXPORTING
+            iv_branch = lv_branch
+            iv_packagenames = lv_pname
+            iv_domain = p_domain
+            iv_folder_structure = p_struct
+             ).
     WRITE / |Finish catchup at { sy-uzeit }|.
 ENDFORM.

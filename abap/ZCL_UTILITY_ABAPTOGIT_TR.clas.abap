@@ -1082,6 +1082,7 @@ CLASS zcl_utility_abaptogit_tr IMPLEMENTATION.
     DATA lv_objname2 TYPE string.
     DATA lv_objtype2 TYPE string.
     DATA lv_devclass TYPE string.
+    DATA ls_tadir TYPE tadir.
     DATA lv_progname TYPE string.
     DATA lv_fugr TYPE string.
     DATA lv_filecontent TYPE string.
@@ -1513,10 +1514,21 @@ CLASS zcl_utility_abaptogit_tr IMPLEMENTATION.
         SELECT SINGLE devclass INTO lv_devclass FROM tadir
             WHERE object = 'XSLT' AND obj_name = lv_objname. "#EC WARNOK "#EC CI_SGLSELECT
       ELSEIF lv_objtype = 'REPT'.
+
         " report text case
         " find out which package the ABAP object belongs to
-        SELECT SINGLE devclass INTO lv_devclass FROM tadir
-            WHERE object = 'REPT' AND obj_name = lv_objname. "#EC WARNOK "#EC CI_SGLSELECT
+        CLEAR lt_objname_parts.
+        SPLIT lv_objname AT '=' INTO TABLE lt_objname_parts.
+        lv_classname = lt_objname_parts[ 1 ].
+        IF strlen( lv_classname ) > 30.
+            lv_classname = lv_objname+0(30).
+        ENDIF.
+        CLEAR ls_tadir.
+        SELECT SINGLE * INTO ls_tadir FROM tadir
+            WHERE obj_name = lv_classname. "#EC WARNOK "#EC CI_SGLSELECT
+        lv_devclass = ls_tadir-devclass.
+        lv_objtype2 = ls_tadir-object.
+
       ELSEIF lv_objtype = 'FORM' OR lv_objtype = 'TEXT'.
 
         "SAPScript case
@@ -2095,6 +2107,7 @@ CLASS zcl_utility_abaptogit_tr IMPLEMENTATION.
       CLEAR: lv_version_no, lt_objversions.
       lv_objname = waprog-prog.
       lv_objtype = 'REPT'.
+      lv_objtype2 = 'PROG'.
       lv_success = me->get_versions_no(
           EXPORTING
               iv_objname = lv_objname
@@ -2135,6 +2148,7 @@ CLASS zcl_utility_abaptogit_tr IMPLEMENTATION.
               devclass = lv_devclass
               objname = lv_objname
               objtype = 'REPT'
+              objtype2 = lv_objtype2
               delflag = abap_false
               verno = lv_version_no
               filecontent = lv_filecontent
