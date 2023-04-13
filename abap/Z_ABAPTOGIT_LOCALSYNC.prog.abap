@@ -17,6 +17,7 @@ PARAMETERS:
     p_uttrid    TYPE string LOWER CASE,
     " Folder structure
     p_struct    TYPE string DEFAULT 'eclipse' LOWER CASE OBLIGATORY,
+    " Download PCR/schame
     p_pcrsch    AS CHECKBOX DEFAULT 'X'.
 
 START-OF-SELECTION.

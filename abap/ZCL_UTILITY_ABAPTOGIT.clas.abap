@@ -1405,6 +1405,7 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
       CLEAR: lv_version_no, lt_objversions.
       lv_objname3 = waprog-obj_name.
       lv_objtype = 'REPT'.
+      lv_objtype2 = 'PROG'.
       lv_success = me->oref_tr->get_versions_no(
           EXPORTING
               iv_objname = lv_objname3
@@ -1435,6 +1436,7 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
       CLEAR lv_commit_object.
       lv_commit_object-objname = lv_objname3.
       lv_commit_object-objtype = lv_objtype.
+      lv_commit_object-objtype2 = lv_objtype2.
       lv_commit_object-devclass = waprog-devclass.
       lv_success = me->save_file(
           EXPORTING

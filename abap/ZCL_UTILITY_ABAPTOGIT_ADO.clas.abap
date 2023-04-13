@@ -688,11 +688,15 @@ CLASS ZCL_UTILITY_ABAPTOGIT_ADO IMPLEMENTATION.
         IF iv_folder_structure = c_folder_structure_flat.
             rv_name = |{ iv_commit_object-objname }.rept.txt|.
         ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+            DATA(lv_codetype) = 'Programs'.
+            IF iv_commit_object-objtype2 = 'CLAS'.
+                lv_codetype = 'Classes'.
+            ENDIF.
             IF iv_local_folder = abap_true.
-                ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Programs|.
-                rv_name = |Source Code Library{ c_delim }Programs{ c_delim }{ iv_commit_object-objname }.rept.txt|.
+                ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }{ lv_codetype }|.
+                rv_name = |Source Code Library{ c_delim }{ lv_codetype }{ c_delim }{ iv_commit_object-objname }.rept.txt|.
             ELSE.
-                rv_name = |Source Code Library{ c_delimgit }Programs{ c_delimgit }{ iv_commit_object-objname }.rept.txt|.
+                rv_name = |Source Code Library{ c_delimgit }{ lv_codetype }{ c_delimgit }{ iv_commit_object-objname }.rept.txt|.
             ENDIF.
         ENDIF.
 
