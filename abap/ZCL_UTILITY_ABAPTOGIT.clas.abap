@@ -178,13 +178,13 @@ CLASS zcl_utility_abaptogit DEFINITION
     " iv_resultfile - result file for heatmap
     " it_users - user filter, not applicable if empty
     METHODS heatmap_trs
-        IMPORTING
-            iv_packagenames TYPE string
-            iv_fromdat      TYPE d
-            iv_todat        TYPE d
-            iv_resultfile   TYPE string
-            it_users        TYPE tty_users
-        RETURNING VALUE(rv_success) TYPE abap_bool.
+      IMPORTING
+                iv_packagenames   TYPE string
+                iv_fromdat        TYPE d
+                iv_todat          TYPE d
+                iv_resultfile     TYPE string
+                it_users          TYPE tty_users
+      RETURNING VALUE(rv_success) TYPE abap_bool.
 
     " check if tasks of a TR are all released
     " iv_trid - TR ID
@@ -218,10 +218,13 @@ CLASS zcl_utility_abaptogit DEFINITION
     " iv_packagenames - package names to include in commit, separated by comma
     " iv_trid - TR ID
     " iv_wid - ADO work item ID
+    " iv_reviewer - reviewer to @ in PR description
     " iv_comment - Comment of the first commit
     " iv_domain - email domain for TR owner
     " iv_prefix - branch prefix
     " iv_curuser - use current user as Git commit author
+    " it_excl_objs - exclusion list for object type
+    " it_excl_tbls - exclusion list for configuration table names
     " ev_title - title of the TR
     " ev_newprurl - URL of PR creation
     METHODS create_pullrequest
@@ -229,10 +232,13 @@ CLASS zcl_utility_abaptogit DEFINITION
                 iv_packagenames   TYPE string
                 iv_trid           TYPE string
                 iv_wid            TYPE string
+                iv_reviewer       TYPE string
                 iv_comment        TYPE string DEFAULT ''
                 iv_domain         TYPE string DEFAULT ''
                 iv_prefix         TYPE string DEFAULT 'users/system'
                 iv_curuser        TYPE abap_bool DEFAULT 'X'
+                it_excl_objs      TYPE zcl_utility_abaptogit_tr=>tty_excl_list OPTIONAL
+                it_excl_tbls      TYPE zcl_utility_abaptogit_tr=>tty_excl_list OPTIONAL
       EXPORTING
                 ev_title          TYPE string
                 ev_newprurl       TYPE string
@@ -245,6 +251,8 @@ CLASS zcl_utility_abaptogit DEFINITION
     " iv_domain - email domain for TR owner
     " iv_prefix - branch prefix
     " iv_curuser - use current user as commit author
+    " it_excl_objs - exclusion list for object type
+    " it_excl_tbls - exclusion list for configuration table names
     METHODS revise_pullrequest
       IMPORTING
                 iv_packagenames   TYPE string
@@ -253,6 +261,8 @@ CLASS zcl_utility_abaptogit DEFINITION
                 iv_domain         TYPE string DEFAULT ''
                 iv_prefix         TYPE string DEFAULT 'users/system/'
                 iv_curuser        TYPE abap_bool DEFAULT 'X'
+                it_excl_objs      TYPE zcl_utility_abaptogit_tr=>tty_excl_list OPTIONAL
+                it_excl_tbls      TYPE zcl_utility_abaptogit_tr=>tty_excl_list OPTIONAL
       RETURNING VALUE(rv_success) TYPE abap_bool.
 
     " get active or latest completed pull request for the TR
@@ -270,6 +280,8 @@ CLASS zcl_utility_abaptogit DEFINITION
     " get latest update date/time among TR objects
     " iv_packagenames - package names to include in commit, separated by comma
     " iv_trid - TR ID
+    " it_excl_objs - exclusion list for object type
+    " it_excl_tbls - exclusion list for configuration table names
     " ev_owner - TR owner
     " ev_date - latest update date
     " ev_time - latest update time
@@ -278,6 +290,8 @@ CLASS zcl_utility_abaptogit DEFINITION
       IMPORTING
         iv_packagenames TYPE string
         iv_trid         TYPE string
+        it_excl_objs    TYPE zcl_utility_abaptogit_tr=>tty_excl_list OPTIONAL
+        it_excl_tbls    TYPE zcl_utility_abaptogit_tr=>tty_excl_list OPTIONAL
       EXPORTING
         ev_owner        TYPE string
         ev_date         TYPE d
@@ -309,6 +323,7 @@ CLASS zcl_utility_abaptogit DEFINITION
     CONSTANTS c_delim TYPE string VALUE '\'.
     CONSTANTS c_custtrfunc TYPE string VALUE 'W'.
     CONSTANTS c_wkbtrfunc TYPE string VALUE 'K'.
+    CONSTANTS c_toctrfunc TYPE string VALUE 'T'.
     CONSTANTS c_relests TYPE string VALUE 'R'.
 
     " max difference in seconds for an imported TR to date time of now
@@ -345,6 +360,14 @@ CLASS zcl_utility_abaptogit DEFINITION
                 cht_filefolders     TYPE tty_list
                 cht_filecontent     TYPE zcl_utility_abaptogit_tr=>tty_abaptext
       RETURNING VALUE(rv_success)   TYPE abap_bool.
+
+    CLASS-METHODS get_utc_datetime
+      IMPORTING
+        iv_date TYPE d
+        iv_time TYPE t
+      EXPORTING
+        ev_date TYPE d
+        ev_time TYPE t.
 
     " wrapper to write telemetry with the callback registered
     METHODS write_telemetry
@@ -541,9 +564,12 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
     DATA lv_comment TYPE string.
     DATA lv_synccnt TYPE i.
     DATA lt_lines TYPE TABLE OF string.
+    DATA lt_reviewers TYPE TABLE OF string.
     DATA lv_title TYPE string.
     DATA lv_description TYPE string.
     DATA lv_author TYPE string.
+    DATA lv_reviewerid TYPE string.
+    DATA lv_custtr TYPE abap_bool.
 
     " get active version of TR objects
     "BUGBUG: TO DO: we need to check the commit object time stamp
@@ -553,9 +579,12 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
             iv_trid = iv_trid
             iv_packagenames = iv_packagenames
             iv_mode = zcl_utility_abaptogit_tr=>c_active_version
+            it_excl_objs = it_excl_objs
+            it_excl_tbls = it_excl_tbls
         IMPORTING
             ev_owner = lv_owner
             ev_comment = lv_comment
+            ev_custtr = lv_custtr
         CHANGING
             it_commit_objects = lt_commit_objects
              ).
@@ -566,6 +595,20 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
 
     IF iv_wid IS NOT INITIAL.
       lv_comment = lv_comment && cl_abap_char_utilities=>cr_lf && iv_comment && cl_abap_char_utilities=>cr_lf && |#{ iv_wid }|.
+    ENDIF.
+
+    IF iv_reviewer IS NOT INITIAL.
+      SPLIT iv_reviewer AT ',' INTO TABLE lt_reviewers.
+      LOOP AT lt_reviewers INTO DATA(wareviewer).
+        me->oref_ado->get_displayname_ado(
+            EXPORTING
+                iv_user = wareviewer
+                iv_domain = iv_domain
+            IMPORTING
+                ev_id = lv_reviewerid
+                 ).
+        lv_comment = lv_comment && cl_abap_char_utilities=>cr_lf && |@<{ lv_reviewerid }>|.
+      ENDLOOP.
     ENDIF.
 
     IF iv_curuser = abap_true.
@@ -848,7 +891,7 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
         FROM e070 AS ts INNER JOIN e070 AS tr ON ts~strkorr = tr~trkorr
         INNER JOIN e07t AS tx ON tx~trkorr = tr~trkorr
         INTO TABLE @lt_trids1
-        WHERE ( tr~trfunction = 'K' OR tr~trfunction = 'W' )
+        WHERE ( tr~trfunction = @c_wkbtrfunc OR tr~trfunction = @c_custtrfunc OR tr~trfunction = @c_toctrfunc )
             AND tr~trstatus = 'D' AND ts~as4user = @lv_user.
     LOOP AT lt_trids1 ASSIGNING FIELD-SYMBOL(<fs1>).
       IF NOT line_exists( lt_keys[ table_line = <fs1>-trid ] ).
@@ -859,7 +902,7 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
     SELECT tr~trkorr, tr~as4user, tr~as4date, tr~as4time, tr~trfunction, tx~as4text
         FROM e070 AS tr INNER JOIN e07t AS tx ON tx~trkorr = tr~trkorr
         INTO TABLE @lt_trids2
-        WHERE ( tr~trfunction = 'K' OR tr~trfunction = 'W' )
+        WHERE ( tr~trfunction = @c_wkbtrfunc OR tr~trfunction = @c_custtrfunc OR tr~trfunction = @c_toctrfunc )
             AND tr~trstatus = 'D' AND tr~as4user = @lv_user.
     LOOP AT lt_trids2 ASSIGNING FIELD-SYMBOL(<fs2>).
       IF NOT line_exists( lt_keys[ table_line = <fs2>-trid ] ).
@@ -953,6 +996,7 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
     DATA lv_fugrname TYPE versobjnam.
     DATA lt_fugrs TYPE STANDARD TABLE OF ts_code_object.
     DATA lt_progs TYPE STANDARD TABLE OF ts_code_object.
+    DATA lt_msags TYPE STANDARD TABLE OF ts_code_object.
     DATA lt_scnnums TYPE STANDARD TABLE OF d020s-dnum.
     DATA lv_basefolder TYPE string.
     DATA lt_subpackages TYPE zcl_utility_abaptogit_tr=>tty_package.
@@ -974,7 +1018,10 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
     DATA lv_subc TYPE reposrc-subc.
     DATA lv_filefolder TYPE string.
     DATA lt_filefolders TYPE tty_list.
+    DATA lv_objname_varx TYPE e071-obj_name.
     DATA lv_objname_form TYPE e071-obj_name.
+    DATA lv_objname_msag TYPE e071-obj_name.
+    DATA lv_objname_msad TYPE e071-obj_name.
 
     IF iv_uptotrid IS SUPPLIED AND iv_mode <> zcl_utility_abaptogit_tr=>c_latest_version.
       me->write_telemetry( iv_message = |latest version required for up-to TR ID supplied| ).
@@ -1054,6 +1101,13 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
+      " Message Class to be processed separately
+      IF lv_objtype = 'MSAG'.
+        IF NOT line_exists( lt_progs[ obj_name = lv_objname devclass = wacode-devclass ] ).
+          APPEND VALUE ts_code_object( obj_name = lv_objname devclass = wacode-devclass ) TO lt_msags.
+        ENDIF.
+      ENDIF.
+
       " function group was processed to extract function modules
       CHECK lv_objtype <> 'FUGR'.
 
@@ -1063,7 +1117,7 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
       IF lv_objtype = 'FORM'.
         CLEAR lt_filecontent.
         lv_objname_form = lv_objname.
-        lv_success = ZCL_UTILITY_ABAPTOGIT_FMT=>get_sapscript_content(
+        lv_success = zcl_utility_abaptogit_fmt=>get_sapscript_content(
             EXPORTING
                 iv_objname = lv_objname_form
             IMPORTING
@@ -1270,6 +1324,22 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
           rv_success = abap_false.
           CONTINUE.
         ENDIF.
+
+*      ELSEIF lv_objtype = 'MSAG'.
+*        CLEAR lt_filecontent.
+*        lv_success = me->oref_tr->build_single_message_content(
+*            EXPORTING
+*                iv_objname = lt_objversions[ 1 ]-objname
+*                iv_version = lt_objversions[ 1 ]-objversionno
+*            IMPORTING
+*                ev_filecontent = lv_filecontent
+*                et_filecontent = lt_filecontent
+*                 ).
+*        IF lv_success <> abap_true.
+*          me->write_telemetry( iv_message = |GET_PACKAGE_CODES fails to fetch object content for { lv_objname3 } type { lv_objtype }| ).
+*          rv_success = abap_false.
+*          CONTINUE.
+*        ENDIF.
 
       ELSE.
 
@@ -1531,8 +1601,150 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
 
     ENDLOOP.
 
-  ENDMETHOD.
+    LOOP AT lt_msags INTO DATA(wamsag).
+      CLEAR: lv_version_no, lt_objversions.
 
+      SELECT * FROM t100 INTO TABLE @DATA(lt_t100)
+      WHERE arbgb        = @wamsag-obj_name.
+
+      "handle MESS in MSAG
+      LOOP AT lt_t100 INTO DATA(ls_t100).
+        lv_objname3 = |{ ls_t100-arbgb }{ ls_t100-msgnr }|.
+        lv_objtype = 'MESS'.
+        CLEAR: lv_version_no, lt_objversions.
+        IF iv_uptotrid IS SUPPLIED.
+          " use date/time of up-to TR ID to constrain version to select if latest version
+          lv_trid = iv_uptotrid.
+          lv_success = me->oref_tr->get_versions_no(
+              EXPORTING
+                  iv_objname = lv_objname3
+                  iv_objtype = lv_objtype
+                  iv_mode = iv_mode
+                  iv_trid = lv_trid
+                  iv_date = lv_dat
+                  iv_time = lv_tim
+                  iv_findtest = abap_false
+              IMPORTING
+                  ev_version_no = lv_version_no
+              CHANGING
+                  cht_objversions = lt_objversions
+                  ).
+        ELSE.
+          " no up-to TR ID constraint
+          lv_success = me->oref_tr->get_versions_no(
+              EXPORTING
+                  iv_objname = lv_objname3
+                  iv_objtype = lv_objtype
+                  iv_mode = iv_mode
+                  iv_findtest = abap_true
+              IMPORTING
+                  ev_version_no = lv_version_no
+              CHANGING
+                  cht_objversions = lt_objversions
+                  ).
+        ENDIF.
+
+        CHECK lv_success = abap_true.
+        CHECK lines( lt_objversions ) > 0.
+
+        CLEAR: lv_filecontent, lt_filecontent.
+        me->oref_tr->build_single_message_content(
+          EXPORTING
+              iv_version = lt_objversions[ 1 ]-objversionno
+              iv_objname = lt_objversions[ 1 ]-objname
+          IMPORTING
+              ev_filecontent = lv_filecontent
+              et_filecontent = lt_filecontent
+               ).
+
+        CLEAR lv_commit_object.
+        lv_commit_object-objname = lv_objname3.
+        lv_commit_object-objtype = lv_objtype.
+        lv_commit_object-devclass = wamsag-devclass.
+        lv_success = me->save_file(
+            EXPORTING
+                iv_commit_object = lv_commit_object
+                iv_basefolder = lv_basefolder
+                iv_folder_structure = iv_folder_structure
+                iv_devclass = wacode-devclass
+            IMPORTING
+                ev_codefolder = lv_codefolder
+                ev_filefolder = lv_filefolder
+            CHANGING
+                cht_filefolders = lt_filefolders
+                cht_filecontent = lt_filecontent
+                 ).
+      ENDLOOP.
+
+      " handle MSAD in MSAG
+      lv_objname_msad = wamsag-obj_name.
+      lv_objtype = 'MSAD'.
+      CLEAR: lv_version_no, lt_objversions.
+      IF iv_uptotrid IS SUPPLIED.
+        " use date/time of up-to TR ID to constrain version to select if latest version
+        lv_trid = iv_uptotrid.
+        lv_success = me->oref_tr->get_versions_no(
+            EXPORTING
+                iv_objname = lv_objname_msad
+                iv_objtype = lv_objtype
+                iv_mode = iv_mode
+                iv_trid = lv_trid
+                iv_date = lv_dat
+                iv_time = lv_tim
+                iv_findtest = abap_false
+            IMPORTING
+                ev_version_no = lv_version_no
+            CHANGING
+                cht_objversions = lt_objversions
+                ).
+      ELSE.
+        " no up-to TR ID constraint
+        lv_success = me->oref_tr->get_versions_no(
+            EXPORTING
+                iv_objname = lv_objname_msad
+                iv_objtype = lv_objtype
+                iv_mode = iv_mode
+                iv_findtest = abap_true
+            IMPORTING
+                ev_version_no = lv_version_no
+            CHANGING
+                cht_objversions = lt_objversions
+                ).
+      ENDIF.
+
+      CHECK lv_success = abap_true.
+      CHECK lines( lt_objversions ) > 0.
+
+      CLEAR: lv_filecontent, lt_filecontent.
+      me->oref_tr->build_msad_content(
+        EXPORTING
+            iv_version = lt_objversions[ 1 ]-objversionno
+            iv_objname = lt_objversions[ 1 ]-objname
+        IMPORTING
+            ev_filecontent = lv_filecontent
+            et_filecontent = lt_filecontent
+             ).
+
+      CLEAR lv_commit_object.
+      lv_commit_object-objname = lv_objname_msad.
+      lv_commit_object-objtype = lv_objtype.
+      lv_commit_object-devclass = wamsag-devclass.
+      lv_success = me->save_file(
+          EXPORTING
+              iv_commit_object = lv_commit_object
+              iv_basefolder = lv_basefolder
+              iv_folder_structure = iv_folder_structure
+              iv_devclass = wacode-devclass
+          IMPORTING
+              ev_codefolder = lv_codefolder
+              ev_filefolder = lv_filefolder
+          CHANGING
+              cht_filefolders = lt_filefolders
+              cht_filecontent = lt_filecontent
+               ).
+    ENDLOOP.
+
+  ENDMETHOD.
 
   METHOD get_related_pullrequest.
     DATA lv_slrelbranch TYPE string.
@@ -1572,10 +1784,6 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
     DATA lv_comment TYPE string.
     DATA lv_date TYPE d.
     DATA lv_time TYPE t.
-    DATA lv_tstmp TYPE timestamp.
-    DATA lv_tstmptext TYPE string.
-    DATA lv_dateutc TYPE string.
-    DATA lv_timeutc TYPE string.
     DATA lv_success TYPE abap_bool.
     DATA lv_codefolder TYPE string.
 
@@ -1586,6 +1794,8 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
             iv_packagenames = iv_packagenames
             iv_mode = zcl_utility_abaptogit_tr=>c_active_version
             iv_needcontent = abap_false
+            it_excl_objs = it_excl_objs
+            it_excl_tbls = it_excl_tbls
         IMPORTING
             ev_owner = ev_owner
             ev_comment = lv_comment
@@ -1595,6 +1805,14 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
     CHECK lv_success = abap_true.
 
     LOOP AT lt_commit_objects ASSIGNING FIELD-SYMBOL(<fs>).
+      get_utc_datetime(
+          EXPORTING
+              iv_date = <fs>-date
+              iv_time = <fs>-time
+          IMPORTING
+              ev_date = <fs>-date
+              ev_time = <fs>-time
+               ).
       IF <fs>-date IS NOT INITIAL OR <fs>-time IS NOT INITIAL.
         IF <fs>-date > lv_date OR ( <fs>-date = lv_date AND <fs>-time > lv_time ).
           lv_date = <fs>-date.
@@ -1616,12 +1834,8 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
     ENDLOOP.
 
     IF lv_date IS NOT INITIAL AND lv_time IS NOT INITIAL.
-      CONVERT DATE lv_date TIME lv_time INTO TIME STAMP lv_tstmp TIME ZONE sy-zonlo.
-      lv_tstmptext = lv_tstmp.
-      lv_dateutc = |{ lv_tstmptext(8) }|.
-      lv_timeutc = |{ lv_tstmptext+8 }|.
-      ev_date = |{ lv_dateutc(4) }{ lv_dateutc+4(2) }{ lv_dateutc+6(2) }|.
-      ev_time = |{ lv_timeutc(2) }{ lv_timeutc+2(2) }{ lv_timeutc+4(2) }|.
+      ev_date = lv_date.
+      ev_time = lv_time.
     ELSE.
       ev_date = '01012000'.
       ev_time = '000000'.
@@ -1673,7 +1887,7 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
 
     LOOP AT lt_trids INTO DATA(wa_trid).
       IF lines( it_users ) > 0 AND NOT line_exists( it_users[ table_line = wa_trid-user ] ).
-          CONTINUE.
+        CONTINUE.
       ENDIF.
       CLEAR: lt_commit_objects, lv_objects, lv_insertions, lv_deletions, lv_tables, lv_rows.
       me->oref_tr->get_tr_commit_objects(
@@ -1812,6 +2026,8 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
             iv_trid = iv_trid
             iv_packagenames = iv_packagenames
             iv_mode = zcl_utility_abaptogit_tr=>c_active_version
+            it_excl_objs = it_excl_objs
+            it_excl_tbls = it_excl_tbls
         IMPORTING
             ev_owner = lv_owner
             ev_comment = lv_comment
@@ -1970,6 +2186,25 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
       me->write_telemetry( iv_message = |push TR { iv_trid } objects ({ lv_synccnt }) to system branch { lv_basebranch }: { sy-uzeit }| iv_kind = 'info' ).
     ENDIF.
 
+  ENDMETHOD.
+
+
+  METHOD get_utc_datetime.
+    DATA lv_tstmp TYPE timestamp.
+    DATA lv_tstmptext TYPE string.
+    DATA lv_dateutc TYPE string.
+    DATA lv_timeutc TYPE string.
+    IF iv_date = '00000000'.
+      ev_date = iv_date.
+      ev_time = iv_time.
+      RETURN.
+    ENDIF.
+    CONVERT DATE iv_date TIME iv_time INTO TIME STAMP lv_tstmp TIME ZONE sy-zonlo.
+    lv_tstmptext = lv_tstmp.
+    lv_dateutc = |{ lv_tstmptext(8) }|.
+    lv_timeutc = |{ lv_tstmptext+8 }|.
+    ev_date = |{ lv_dateutc(4) }{ lv_dateutc+4(2) }{ lv_dateutc+6(2) }|.
+    ev_time = |{ lv_timeutc(2) }{ lv_timeutc+2(2) }{ lv_timeutc+4(2) }|.
   ENDMETHOD.
 
 
