@@ -1,12 +1,12 @@
 # abap2git
 
-**abap2git** is a simplified sync tool written in ABAP code to one-way sync ABAP objects from an SAP system to Git repository with Azure DevOps REST API. Compared to existing solution abapGit (https://abapgit.org/), it brings following benefits:
+**abap2git** is a simplified sync tool written in ABAP code to one-way sync ABAP objects from an SAP system to Git repository with Azure DevOps REST API with following benefits:
 * Support multiple packages in a Git branch
 * Support multiple SAP systems in the same Git repo, each in their respective branches
 * Sync ABAP objects in a released workbench/customizing transport request (shortened as TR below) to specific Git branch
-* Support configuration changes in customizing transport request
+* Support configuration changes in customizing transport request for 1380 ones specified in OBJH table
 * Support HR/Payroll schemas/personnel calculation rules (PCR) in customizing transport request
-* The sync for the transport request only accesses the ABAP objects contained and not other unchanged ABAP objects, thus more efficient
+* The sync for the transport request only accesses the ABAP objects contained and not other unchanged ABAP objects
 
 ## Features
 1. Download ABAP objects in specific package(s) of an SAP system to local folder, each package a folder.
