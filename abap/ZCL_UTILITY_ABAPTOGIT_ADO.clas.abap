@@ -448,7 +448,21 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
     DATA lv_folder TYPE rlgrap-filename.
     DATA lv_type TYPE string.
 
-    IF iv_commit_object-objtype = 'FUNC' OR iv_commit_object-objtype2 = 'FUNC'.
+    IF iv_commit_object-objtype = 'TROBJ'.
+
+      " TR object list log named as <name>.trobj.abap
+      IF iv_folder_structure = c_folder_structure_flat.
+        rv_name = |{ iv_commit_object-objname }.trobj.txt|.
+      ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+        IF iv_local_folder = abap_true.
+          ev_file_folder = |{ iv_base_folder }{ iv_commit_object-devclass }|.
+          rv_name = |{ c_delim }{ iv_commit_object-objname }.trobj.txt|.
+        ELSE.
+          rv_name = |{ c_delimgit }{ iv_commit_object-objname }.trobj.txt|.
+        ENDIF.
+      ENDIF.
+
+    ELSEIF iv_commit_object-objtype = 'FUNC' OR iv_commit_object-objtype2 = 'FUNC'.
 
       " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
