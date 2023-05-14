@@ -11,6 +11,7 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
                c_active_version        TYPE string VALUE 'active',
                c_schemapcr             TYPE string VALUE '.schemapcr',
                c_config                TYPE string VALUE '.config',
+               c_trobj                 TYPE string VALUE '.trobj',
                c_varx                  TYPE string VALUE '.varx'.
 
     " TR info
@@ -4593,6 +4594,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA wa_objversion TYPE ts_version_no.
     DATA lt_filecontent TYPE tty_abaptext.
     DATA lt_tclsfilecontent TYPE tty_abaptext.
+    DATA lt_trobjcontent TYPE tty_abaptext.
     DATA lt_packagenames TYPE TABLE OF string.
     DATA lv_packagename TYPE string.
     DATA lt_fgfmcodes TYPE TABLE OF string.
@@ -4769,6 +4771,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
       DATA(lv_objname) = <fs_cs_request_object>-obj_name.
       DATA(lv_objtype) = <fs_cs_request_object>-object.
+
+      APPEND |object { lv_objname }, type { lv_objtype }| TO lt_trobjcontent.
+
+      LOOP AT ld_cs_request-keys ASSIGNING <fs_cs_request_key> WHERE mastertype = lv_objtype AND mastername = lv_objname.
+        APPEND |    object { <fs_cs_request_key>-object }, name { <fs_cs_request_key>-objname }, key { <fs_cs_request_key>-tabkey }| TO lt_trobjcontent.
+      ENDLOOP.
 
       " table config change object
       IF lv_objtype = 'TABU'
@@ -5521,6 +5529,20 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           ) TO it_commit_objects.
 
     ENDLOOP.
+
+    " stitch to string from TR object lines
+    lv_filecontent = concat_lines_of( table = lt_trobjcontent sep = cl_abap_char_utilities=>cr_lf ).
+
+    " align with GUI_DOWNLOAD which adds a blank line
+    lv_filecontent = lv_filecontent && cl_abap_char_utilities=>cr_lf.
+
+    APPEND VALUE ts_commit_object(
+        devclass = c_trobj
+        objname = lv_trkorr
+        objtype = 'TROBJ'
+        objtype2 = 'TROBJ'
+        filecontent = lv_filecontent
+        ) TO it_commit_objects.
 
     " function groups collected
     LOOP AT lt_fugrs INTO DATA(wafugr).
