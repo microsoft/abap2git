@@ -20,6 +20,15 @@ public section.
             et_filecontent    TYPE tty_abaptext
         RETURNING VALUE(rv_success) TYPE abap_bool.
 
+    CLASS-METHODS GET_BRF_XML_CONTENT
+        IMPORTING
+          !IV_APPLICATIONID type FDT_UUID
+        EXPORTING
+          !EV_XMLCONTENT type STRING
+          !EV_XMLAPPNAME type STRING
+          !EV_ERRORMESSAGE type STRING
+        RETURNING VALUE(rv_success) TYPE abap_bool.
+
 protected section.
 
 private section.
@@ -28,10 +37,14 @@ private section.
           t_meaning     VALUE '1',                  "#EC NOTEXT Bedeutung
           t_standard    VALUE '2',                  "#EC NOTEXT Standardattribute
           t_print       VALUE '3',                  "#EC NOTEXT Druckattribute
-          t_pagecounter VALUE '4',                  "#EC NOTEXT Seitenz‰hler
+          t_pagecounter VALUE '4',                  "#EC NOTEXT Seitenz√§hler
           t_pagewins    VALUE '5',                  "#EC NOTEXT Seitenfenster
           t_title       VALUE '6',                  "#EC NOTEXT Titel
           t_after_title VALUE '7'.                  "#EC NOTEXT Nach Titel
+    constants C_XML_BRF_VERSION type FDT_XML_VERSION value '1.11' ##NO_TEXT.
+    constants C_XML_BRF_SCHEMA type STRING value 'http://sap.corp/fdt/Internal.xsd' ##NO_TEXT.
+    constants C_XML_BRF_URL type STRING value 'http://sap.com/fdt/transport' ##NO_TEXT.
+    constants C_XML_BRF_APPNAME_PATH type STRING value '/FDT/"http://sap.com/fdt/transport:APPLICATION"/"http://sap.com/fdt/transport:ADMIN_DATA"/"http://sap.com/fdt/transport:NAME"' ##NO_TEXT.
 
     TYPES: BEGIN OF ts_result,
              id(8),
@@ -108,10 +121,115 @@ private section.
       CHANGING
         cht_filecontent TYPE tty_abaptext.
 
+    CLASS-METHODS CONVERT_XSTRING_TO_STRING
+      importing
+        !IV_XSTRING type XSTRING
+      exporting
+        !EV_STRING type STRING.
+
 ENDCLASS.
 
 
+
 CLASS ZCL_UTILITY_ABAPTOGIT_FMT IMPLEMENTATION.
+
+
+  METHOD CONVERT_XSTRING_TO_STRING.
+    DATA: lv_length TYPE i,
+          lt_binary TYPE STANDARD TABLE OF x255.
+
+    CALL FUNCTION 'SCMS_XSTRING_TO_BINARY'
+      EXPORTING
+        buffer        = iv_xstring
+      IMPORTING
+        output_length = lv_length
+      TABLES
+        binary_tab    = lt_binary.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    CALL FUNCTION 'SCMS_BINARY_TO_STRING'
+      EXPORTING
+        input_length = lv_length
+      IMPORTING
+        text_buffer  = ev_string
+      TABLES
+        binary_tab   = lt_binary
+      EXCEPTIONS
+        failed       = 1
+        OTHERS       = 2.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD GET_BRF_XML_CONTENT.
+    data:
+      lv_xstring TYPE xstring,
+      lo_ixml TYPE REF TO if_ixml,
+      lo_data_exchange TYPE REF TO if_fdt_data_exchange,
+      lo_factory TYPE REF TO if_fdt_factory,
+      lr_id_per_application TYPE REF TO cl_fdt_wd_rt_mass_change=>s_id_per_application,
+      lo_document TYPE REF TO if_ixml_document,
+      lt_message TYPE if_fdt_types=>t_message,
+      lts_failed_id TYPE if_fdt_types=>ts_object_id,
+      lo_utf8 TYPE REF TO if_ixml_encoding,
+      lo_ostream TYPE REF TO if_ixml_ostream,
+      lo_streamfactory TYPE REF TO if_ixml_stream_factory,
+      lo_renderer TYPE REF TO if_ixml_renderer.
+
+    lo_factory = cl_fdt_factory=>if_fdt_factory~get_instance( ).
+    TRY.
+        lo_data_exchange = lo_factory->get_data_exchange( ).
+        lo_data_exchange->export_xml_application(
+            EXPORTING
+                iv_application_id = iv_applicationid
+                iv_schema      = c_xml_brf_schema
+                iv_xml_version = c_xml_brf_version
+            IMPORTING
+                eo_dom_tree    = lo_document
+                et_message     = lt_message
+                ets_failure    = lts_failed_id ).
+    CATCH CX_FDT_INPUT INTO DATA(lx_fdt).
+        rv_success = abap_false.
+        lt_message = lx_fdt->mt_message.
+        LOOP AT lt_message into DATA(lw_message).
+            ev_errormessage = ev_errormessage &&  CL_ABAP_CHAR_UTILITIES=>NEWLINE && lw_message-text.
+        ENDLOOP.
+        RETURN.
+    ENDTRY.
+
+    IF lo_document IS BOUND AND cl_fdt_services=>contains_eax_message( lt_message ) EQ abap_false.
+      " Convert Document to an string.
+        CLEAR: lv_xstring.
+        lo_ixml = cl_ixml=>create( ).
+        lo_utf8 = lo_ixml->create_encoding( character_set = 'utf-8'
+                                            byte_order    = 0 ).
+        lo_document->set_encoding( encoding = lo_utf8 ).
+        lo_streamfactory = lo_ixml->create_stream_factory( ).
+        lo_ostream = lo_streamfactory->create_ostream_xstring( string = lv_xstring ).
+        lo_ostream->set_encoding( encoding = lo_utf8 ).
+        lo_ostream->set_pretty_print( abap_true ).
+        lo_renderer = lo_ixml->create_renderer( ostream  = lo_ostream
+                                                document = lo_document ).
+        IF lo_renderer->render( ) NE 0.
+          CLEAR: lt_message.
+          rv_success = abap_false.
+        ELSE.
+          data(lv_appname_element) = lo_document->find_from_path_ns( EXPORTING default_uri = c_xml_brf_url path = c_xml_brf_appname_path ).
+          data(lv_appname_value) = lv_appname_element->get_value( ).
+          convert_xstring_to_string( EXPORTING iv_xstring = lv_xstring IMPORTING ev_string = ev_xmlcontent ).
+          ev_xmlappname = lv_appname_value.
+          rv_success = abap_true.
+        ENDIF.
+    ELSE.
+      rv_success = abap_false.
+    ENDIF.
+
+  ENDMETHOD.
+
 
   METHOD get_sapscript_content.
 
@@ -223,46 +341,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_FMT IMPLEMENTATION.
 
   ENDMETHOD.
 
-  METHOD get_text_header_content.
-    DATA: lt_header_struct     TYPE REF TO cl_abap_structdescr,
-          lt_header_components TYPE        abap_compdescr_tab,
-          lt_fieldattr         TYPE STANDARD TABLE OF dfies INITIAL SIZE 0,
-          ls_header            TYPE thead,
-          wa_fieldattr         TYPE dfies.
-
-    FIELD-SYMBOLS : <fs_components> TYPE abap_compdescr.
-    FIELD-SYMBOLS: <f1> TYPE any, <f2> TYPE any, <f3> TYPE any.
-
-    CALL FUNCTION 'DDIF_FIELDINFO_GET'
-      EXPORTING
-        tabname   = 'ITCTA'
-      TABLES
-        dfies_tab = lt_fieldattr
-      EXCEPTIONS
-        OTHERS    = 1.
-
-    ls_header = is_header.
-    lt_header_struct ?= cl_abap_typedescr=>describe_by_data( ls_header ).
-    lt_header_components = lt_header_struct->components.
-
-    ASSIGN ls_header TO <f1>.
-
-    APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
-    APPEND 'HEADER' TO cht_filecontent.
-    APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
-
-    LOOP AT lt_header_components INTO DATA(wa_header).
-      CLEAR wa_fieldattr.
-      ASSIGN wa_header-name TO <f2>.
-      ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
-      READ TABLE lt_fieldattr INTO wa_fieldattr WITH KEY tabname = 'ITCTA'
-                                  fieldname = <f2>
-                                  langu = sy-langu.
-      APPEND  |{ <f2> WIDTH = 22 }{ cl_abap_char_utilities=>horizontal_tab }| &&
-              |{ wa_fieldattr-scrtext_m WIDTH = 22 }{ cl_abap_char_utilities=>horizontal_tab }| &&
-              |{ <f3> WIDTH = 22 }| TO cht_filecontent.
-    ENDLOOP.
-  ENDMETHOD.
 
   METHOD get_text_form_header_content.
     DATA: lt_formheader_struct     TYPE REF TO   cl_abap_structdescr.
@@ -298,476 +376,50 @@ CLASS ZCL_UTILITY_ABAPTOGIT_FMT IMPLEMENTATION.
     ENDLOOP.
   ENDMETHOD.
 
-  METHOD get_text_string_content.
 
-    DATA: lt_fieldattr TYPE STANDARD TABLE OF dfies INITIAL SIZE 0.
-    DATA: var1                      LIKE sy-index.
-    DATA: var2                      LIKE sy-index.
-    DATA: var3                      LIKE sy-index.
-    DATA: lt_string_table           TYPE REF TO   cl_abap_tabledescr.
-    DATA: lt_string_struct          TYPE REF TO   cl_abap_structdescr.
-    DATA: lt_string_components      TYPE          abap_compdescr_tab.
-    DATA: lt_strings                TYPE tty_itcds.
-    DATA: lt_results                TYPE tty_result.
-    DATA: ls_result                 TYPE ts_result.
-    DATA: entry.
+  METHOD get_text_header_content.
+    DATA: lt_header_struct     TYPE REF TO cl_abap_structdescr,
+          lt_header_components TYPE        abap_compdescr_tab,
+          lt_fieldattr         TYPE STANDARD TABLE OF dfies INITIAL SIZE 0,
+          ls_header            TYPE thead,
+          wa_fieldattr         TYPE dfies.
+
+    FIELD-SYMBOLS : <fs_components> TYPE abap_compdescr.
     FIELD-SYMBOLS: <f1> TYPE any, <f2> TYPE any, <f3> TYPE any.
-
-    lt_strings = it_strings.
-    lt_string_table ?= cl_abap_typedescr=>describe_by_data( lt_strings ).
-    lt_string_struct ?= lt_string_table->get_table_line_type( ).
-    lt_string_components = lt_string_struct->components.
-
-    DATA: ls_string_attr TYPE ty_string_array.
-    DATA: lt_string_standardattr TYPE STANDARD TABLE OF ty_string_array.
-    DATA: lt_string_fontattr TYPE STANDARD TABLE OF ty_string_array.
-
-************************ Standard attribute *****************************
-    ls_string_attr-name = 'TDMARK'.
-    APPEND ls_string_attr TO lt_string_standardattr.
-    ls_string_attr-name = 'TDPROTLINE'.
-    APPEND ls_string_attr TO lt_string_standardattr.
-    ls_string_attr-name = 'TDHIDDEN'.
-    APPEND ls_string_attr TO lt_string_standardattr.
-    ls_string_attr-name = 'TDSUPER'.
-    APPEND ls_string_attr TO lt_string_standardattr.
-    ls_string_attr-name = 'TDBARCODE'.
-    APPEND ls_string_attr TO lt_string_standardattr.
-
-************************ Font attribute *********************************
-    ls_string_attr-name = 'TDFAMILY'.
-    APPEND ls_string_attr TO lt_string_fontattr.
-    ls_string_attr-name = 'TDHEIGHT'.
-    APPEND ls_string_attr TO lt_string_fontattr.
-    ls_string_attr-name = 'TDBOLD'.
-    APPEND ls_string_attr TO lt_string_fontattr.
-    ls_string_attr-name = 'TDITALIC'.
-    APPEND ls_string_attr TO lt_string_fontattr.
-    ls_string_attr-name = 'TDUNDERLIN'.
-    APPEND ls_string_attr TO lt_string_fontattr.
-    ls_string_attr-name = 'TDULPOS'.
-    APPEND ls_string_attr TO lt_string_fontattr.
-    ls_string_attr-name = 'TDULTHICK'.
-    APPEND ls_string_attr TO lt_string_fontattr.
-    ls_string_attr-name = 'TDULGREY'.
-    APPEND ls_string_attr TO lt_string_fontattr.
-    ls_string_attr-name = 'TDUNDERLIN'.
-    APPEND ls_string_attr TO lt_string_fontattr.
 
     CALL FUNCTION 'DDIF_FIELDINFO_GET'
       EXPORTING
-        tabname   = 'ITCDS'
+        tabname   = 'ITCTA'
       TABLES
         dfies_tab = lt_fieldattr
       EXCEPTIONS
-        OTHERS    = 1.
+        NOT_FOUND = 1
+        OTHERS    = 2.
+    CHECK sy-subrc = 0.
 
-    var2 = 1.
+    ls_header = is_header.
+    lt_header_struct ?= cl_abap_typedescr=>describe_by_data( ls_header ).
+    lt_header_components = lt_header_struct->components.
 
-    LOOP AT lt_strings INTO DATA(lv_string).
-      ASSIGN lv_string TO <f1>.
+    ASSIGN ls_header TO <f1>.
 
-      var1 = 0.
-      MOVE lv_string-tdstring TO ls_result-id.
-      MOVE t_meaning TO ls_result-item.
-      MOVE lv_string-tdtext TO ls_result-value.
-      var3 = var2.
-      APPEND ls_result TO lt_results.
-      CLEAR: ls_result-item, ls_result-value.
-      ADD 1 TO var2.
+    APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
+    APPEND 'HEADER' TO cht_filecontent.
+    APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
 
-      MOVE 'Standard Attributes' TO ls_result-item.
-      entry = abap_false.
-      LOOP AT lt_string_standardattr INTO DATA(wa_stdattr_itcds).
-        ASSIGN wa_stdattr_itcds-name TO <f2>.
-        ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
-        READ TABLE lt_fieldattr INTO DATA(wa_fieldattr) WITH KEY tabname = 'ITCDS'
-                                    fieldname = <f2>
-                                    langu = sy-langu.
-        MOVE wa_fieldattr-scrtext_m TO ls_result-attr.
-        MOVE <f3> TO ls_result-value.
-        APPEND ls_result TO lt_results.
-        CLEAR: ls_result-attr, ls_result-value.
-        entry = abap_true.
-        ADD 1 TO var2.
-      ENDLOOP.
-
-      MOVE 'Font Attributes' TO ls_result-item.
-      entry = abap_false.
-      LOOP AT lt_string_fontattr INTO DATA(wa_fontattr_itcds).
-        ASSIGN wa_fontattr_itcds-name TO <f2>.
-        ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
-        READ TABLE lt_fieldattr INTO wa_fieldattr WITH KEY tabname = 'ITCDS'
-                                    fieldname = <f2>
-                                    langu = sy-langu.
-        MOVE wa_fieldattr-scrtext_m TO ls_result-attr.
-
-        MOVE <f3> TO ls_result-value.
-        APPEND ls_result TO lt_results.
-        CLEAR: ls_result-attr, ls_result-value.
-        entry = abap_true.
-        ADD 1 TO var2.
-      ENDLOOP.
-
+    LOOP AT lt_header_components INTO DATA(wa_header).
+      CLEAR wa_fieldattr.
+      ASSIGN wa_header-name TO <f2>.
+      ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
+      READ TABLE lt_fieldattr INTO wa_fieldattr WITH KEY tabname = 'ITCTA'
+                                  fieldname = <f2>
+                                  langu = sy-langu.
+      APPEND  |{ <f2> WIDTH = 22 }{ cl_abap_char_utilities=>horizontal_tab }| &&
+              |{ wa_fieldattr-scrtext_m WIDTH = 22 }{ cl_abap_char_utilities=>horizontal_tab }| &&
+              |{ <f3> WIDTH = 22 }| TO cht_filecontent.
     ENDLOOP.
-
-    CLEAR ls_result.
-
-    LOOP AT lt_results INTO ls_result.
-      IF sy-tabix = 1.
-        APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
-        APPEND |Characters    Attributes| TO cht_filecontent.
-        APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
-        APPEND '' TO cht_filecontent.
-      ENDIF.
-      AT NEW id.
-        APPEND '' TO cht_filecontent.
-      ENDAT.
-
-      AT NEW item.
-        IF ls_result-item <> t_meaning.
-
-          APPEND |{ ls_result-item WIDTH = 15 }| TO cht_filecontent.
-        ENDIF.
-      ENDAT.
-      IF ls_result-item = t_meaning.
-        APPEND |{ ls_result-id WIDTH = 12 }{ ls_result-value WIDTH = 15 }| TO cht_filecontent.
-      ELSE.
-        APPEND |{ ls_result-attr WIDTH = 18 }{ cl_abap_char_utilities=>horizontal_tab }{ ls_result-value WIDTH = 36 }| TO cht_filecontent.
-      ENDIF.
-
-    ENDLOOP.
-
   ENDMETHOD.
 
-  METHOD get_text_paragraph_content.
-    DATA: var1                      LIKE sy-index.
-    DATA: var2                      LIKE sy-index.
-    DATA: var3                      LIKE sy-index.
-    DATA: lt_paragraphs             TYPE tty_itcdp.
-    DATA: lt_tabs                    TYPE tty_itcdq.
-    DATA: lt_fieldattr              TYPE STANDARD TABLE OF dfies INITIAL SIZE 0.
-    DATA: lt_para_table             TYPE REF TO   cl_abap_tabledescr.
-    DATA: lt_para_struct            TYPE REF TO   cl_abap_structdescr.
-    DATA: lt_para_components        TYPE          abap_compdescr_tab.
-    DATA: lt_results                TYPE tty_result.
-    DATA: ls_result                 TYPE ts_result.
-    DATA: entry.
-    FIELD-SYMBOLS: <f1> TYPE any, <f2> TYPE any, <f3> TYPE any.
-
-    lt_paragraphs = it_paragraphs.
-
-    CALL FUNCTION 'DDIF_FIELDINFO_GET'
-      EXPORTING
-        tabname   = 'ITCDP'
-      TABLES
-        dfies_tab = lt_fieldattr
-      EXCEPTIONS
-        OTHERS    = 1.
-
-    var2 = 1.
-
-    lt_para_table ?= cl_abap_typedescr=>describe_by_data( lt_paragraphs ).
-    lt_para_struct ?= lt_para_table->get_table_line_type( ).
-    lt_para_components = lt_para_struct->components.
-
-    DATA: ls_para_attr TYPE ty_string_array.
-    DATA: lt_para_standardattr TYPE STANDARD TABLE OF ty_string_array.
-    DATA: lt_para_fontattr TYPE STANDARD TABLE OF ty_string_array.
-    DATA: lt_para_outlineattr TYPE STANDARD TABLE OF ty_string_array.
-
-************************ PARAGRAPHS Standard attribute *****************************
-    ls_para_attr-name = 'TDPLDIST'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPLDISTU'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDNOBLANKS'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPTOP'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPTOPU'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPBOT'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPBOTU'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPLEFT'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPLEFTU'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPRIGHT'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPRIGHTU'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPENTRY'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPENTRYU'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPJUSTIFY'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPPROTNEX'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-    ls_para_attr-name = 'TDPPROTPAG'.
-    APPEND ls_para_attr TO lt_para_standardattr.
-
-************************ PARAGRAPHS Font attribute *********************************
-    ls_para_attr-name = 'TDFAMILY'.
-    APPEND ls_para_attr TO lt_para_fontattr.
-    ls_para_attr-name = 'TDHEIGHT'.
-    APPEND ls_para_attr TO lt_para_fontattr.
-    ls_para_attr-name = 'TDBOLD'.
-    APPEND ls_para_attr TO lt_para_fontattr.
-    ls_para_attr-name = 'TDITALIC'.
-    APPEND ls_para_attr TO lt_para_fontattr.
-    ls_para_attr-name = 'TDUNDERLIN'.
-    APPEND ls_para_attr TO lt_para_fontattr.
-    ls_para_attr-name = 'TDULPOS'.
-    APPEND ls_para_attr TO lt_para_fontattr.
-    ls_para_attr-name = 'TDULPOSU'.
-    APPEND ls_para_attr TO lt_para_fontattr.
-    ls_para_attr-name = 'TDULTHICK'.
-    APPEND ls_para_attr TO lt_para_fontattr.
-    ls_para_attr-name = 'TDULTHICKU'.
-    APPEND ls_para_attr TO lt_para_fontattr.
-    ls_para_attr-name = 'TDULGREY'.
-    APPEND ls_para_attr TO lt_para_fontattr.
-    ls_para_attr-name = 'TDUNDERLIN'.
-    APPEND ls_para_attr TO lt_para_fontattr.
-************************ PARAGRAPHS outline attribute *********************************
-    ls_para_attr-name = 'TDLFIRSTPA'.
-    APPEND ls_para_attr TO lt_para_outlineattr.
-    ls_para_attr-name = 'TDLDEPTH'.
-    APPEND ls_para_attr TO lt_para_outlineattr.
-    ls_para_attr-name = 'TDLCHAINED'.
-    APPEND ls_para_attr TO lt_para_outlineattr.
-    ls_para_attr-name = 'TDNUMBERIN'.
-    APPEND ls_para_attr TO lt_para_outlineattr.
-    ls_para_attr-name = 'TDNUMOUTL'.
-    APPEND ls_para_attr TO lt_para_outlineattr.
-    ls_para_attr-name = 'TDNUMFIXC'.
-    APPEND ls_para_attr TO lt_para_outlineattr.
-    ls_para_attr-name = 'TDLSTRING'.
-    APPEND ls_para_attr TO lt_para_outlineattr.
-    ls_para_attr-name = 'TDNUMLEFT'.
-    APPEND ls_para_attr TO lt_para_outlineattr.
-    ls_para_attr-name = 'TDNUMLEFTU'.
-    APPEND ls_para_attr TO lt_para_outlineattr.
-    ls_para_attr-name = 'TDLFIRSTC'.
-    APPEND ls_para_attr TO lt_para_outlineattr.
-    ls_para_attr-name = 'TDLLASTC'.
-    APPEND ls_para_attr TO lt_para_outlineattr.
-
-    LOOP AT lt_paragraphs INTO DATA(lv_paragraph).
-      ASSIGN lv_paragraph TO <f1>.
-      var1 = 0.
-      MOVE lv_paragraph-tdpargraph TO ls_result-id.
-      MOVE t_meaning TO ls_result-item.
-      MOVE lv_paragraph-tdtext TO ls_result-value.
-      var3 = var2.
-      APPEND ls_result TO lt_results.
-      CLEAR: ls_result-item, ls_result-value.
-      ADD 1 TO var2.
-
-************************ Standard attribute ****************************
-      MOVE 'Standard attribute' TO ls_result-item.
-      LOOP AT lt_para_standardattr INTO DATA(wa_stdattr_itcdp).
-        ASSIGN wa_stdattr_itcdp-name TO <f2>.
-        ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
-        READ TABLE lt_fieldattr INTO DATA(wa_fieldattr) WITH KEY tabname = 'ITCDP'
-                                    fieldname = <f2>
-                                    langu = sy-langu.
-        MOVE wa_fieldattr-scrtext_m TO ls_result-attr.
-        MOVE <f3> TO ls_result-value.
-        APPEND ls_result TO lt_results.
-        CLEAR: ls_result-attr, ls_result-value.
-        entry = abap_true.
-        ADD 1 TO var2.
-      ENDLOOP.
-
-      CLEAR ls_result-item.
-      MOVE 'Font Attributes' TO ls_result-item.
-      entry = abap_false.
-      LOOP AT lt_para_fontattr INTO DATA(wa_fontattr_itcdp).
-        ASSIGN wa_fontattr_itcdp-name TO <f2>.
-        ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
-        READ TABLE lt_fieldattr INTO wa_fieldattr WITH KEY tabname = 'ITCDP'
-                                    fieldname = <f2>
-                                    langu = sy-langu.
-        MOVE wa_fieldattr-scrtext_m TO ls_result-attr.
-
-        MOVE <f3> TO ls_result-value.
-        APPEND ls_result TO lt_results.
-        CLEAR: ls_result-attr, ls_result-value.
-        entry = abap_true.
-        ADD 1 TO var2.
-      ENDLOOP.
-      IF entry = abap_true.
-        ADD 1 TO var1.
-      ENDIF.
-
-      CLEAR ls_result-item.
-      MOVE 'Outline Attributes' TO ls_result-item.
-      entry = abap_false.
-      LOOP AT lt_para_outlineattr INTO DATA(wa_outlineattr_itcdp).
-        ASSIGN wa_outlineattr_itcdp-name TO <f2>.
-        ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
-        READ TABLE lt_fieldattr INTO wa_fieldattr WITH KEY tabname = 'ITCDP'
-                                    fieldname = <f2>
-                                    langu = sy-langu.
-        MOVE wa_fieldattr-scrtext_m TO ls_result-attr.
-
-        MOVE <f3> TO ls_result-value.
-        APPEND ls_result TO lt_results.
-        CLEAR: ls_result-attr, ls_result-value.
-        entry = abap_true.
-        ADD 1 TO var2.
-      ENDLOOP.
-
-      CLEAR ls_result-item.
-      MOVE 'Tabs' TO ls_result-item.
-      entry = abap_false.
-      LOOP AT lt_tabs INTO DATA(lv_tabs) WHERE tdpargraph = lv_paragraph-tdpargraph.
-        MOVE lv_tabs-tdtabpos TO ls_result-attr+0(8).
-        MOVE lv_tabs-tdtabposu TO ls_result-attr+8(2).
-        CONDENSE ls_result-attr.
-        MOVE lv_tabs-tdtjustify TO ls_result-value.
-        APPEND ls_result TO lt_results.
-        CLEAR: ls_result-attr, ls_result-value.
-        entry = abap_true.
-        ADD 1 TO var2.
-      ENDLOOP.
-
-    ENDLOOP.
-    IF entry = abap_true.
-      ADD 1 TO var1.
-    ENDIF.
-    READ TABLE lt_results INTO ls_result INDEX var3.
-    ls_result-vol = var2 - var3 + var1.
-    MODIFY lt_results FROM ls_result INDEX var3.
-    CLEAR ls_result-vol.
-
-    APPEND '' TO cht_filecontent.
-    LOOP AT lt_results INTO ls_result.
-      IF sy-tabix = 1.
-        APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
-        APPEND |Paragraphs    Attributes| TO cht_filecontent.
-        APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
-        APPEND '' TO cht_filecontent.
-      ENDIF.
-      AT NEW id.
-        APPEND '' TO cht_filecontent.
-      ENDAT.
-
-      AT NEW item.
-        IF ls_result-item <> t_meaning.
-          APPEND |{ ls_result-item WIDTH = 15 }| TO cht_filecontent.
-        ENDIF.
-      ENDAT.
-      IF ls_result-item = t_meaning.
-        APPEND |{ ls_result-id WIDTH = 12 }{ ls_result-value WIDTH = 15 }| TO cht_filecontent.
-      ELSE.
-        APPEND |{ ls_result-attr WIDTH = 18 }{ cl_abap_char_utilities=>horizontal_tab }{ ls_result-value WIDTH = 36 }| TO cht_filecontent.
-      ENDIF.
-
-    ENDLOOP.
-
-  ENDMETHOD.
-
-  METHOD get_text_windows_content.
-
-    DATA: ls_window_attr TYPE ty_string_array.
-    DATA: lt_window_attr TYPE STANDARD TABLE OF ty_string_array.
-    DATA: lt_fieldattr              TYPE STANDARD TABLE OF dfies INITIAL SIZE 0.
-    DATA: var1                      LIKE sy-index.
-    DATA: var2                      LIKE sy-index.
-    DATA: var3                      LIKE sy-index.
-    DATA: lt_windows                TYPE tty_itctw.
-    DATA: lt_results                TYPE tty_result.
-    DATA: ls_result                 TYPE ts_result.
-    DATA: entry.
-
-    FIELD-SYMBOLS: <f1> TYPE any, <f2> TYPE any, <f3> TYPE any.
-
-    lt_windows = it_windows.
-************************ Window attribute *****************************
-    ls_window_attr-name = 'TDWTYPE'.
-    APPEND ls_window_attr TO lt_window_attr.
-    ls_window_attr-name = 'TDFIRSTPAR'.
-    APPEND ls_window_attr TO lt_window_attr.
-    ls_window_attr-name = 'TDWTYPE'.
-    APPEND ls_window_attr TO lt_window_attr.
-
-
-    CALL FUNCTION 'DDIF_FIELDINFO_GET'
-      EXPORTING
-        tabname   = 'ITCTW'
-      TABLES
-        dfies_tab = lt_fieldattr
-      EXCEPTIONS
-        OTHERS    = 1.
-
-    var2 = 1.
-
-    LOOP AT lt_windows INTO DATA(lv_window).
-      ASSIGN lv_window TO <f1>.
-      MOVE lv_window-tdwindow TO ls_result-id.
-      MOVE t_meaning TO ls_result-item.
-      MOVE lv_window-tdtext TO ls_result-value.
-      var3 = var2.
-      APPEND ls_result TO lt_results.
-      CLEAR: ls_result-item, ls_result-value.
-      ADD 1 TO var2.
-
-      LOOP AT lt_window_attr INTO DATA(wa_window_attr_itctw).
-        ASSIGN wa_window_attr_itctw-name TO <f2>.
-        ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
-        READ TABLE lt_fieldattr INTO DATA(wa_fieldattr) WITH KEY tabname = 'ITCTW'
-                                    fieldname = <f2>
-                                    langu = sy-langu.
-        MOVE wa_fieldattr-scrtext_m TO ls_result-attr.
-        MOVE <f3> TO ls_result-value.
-        APPEND ls_result TO lt_results.
-        CLEAR: ls_result-attr, ls_result-value.
-        entry = abap_true.
-        ADD 1 TO var2.
-      ENDLOOP.
-
-      READ TABLE lt_results INTO ls_result INDEX var3.
-      ls_result-vol = var2 - var3 + var1.
-      MODIFY lt_results FROM ls_result INDEX var3.
-      CLEAR ls_result-vol.
-
-    ENDLOOP.
-
-    APPEND '' TO cht_filecontent.
-
-    LOOP AT lt_results INTO ls_result.
-      IF sy-tabix = 1.
-        APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
-        APPEND |Windows       Attributes| TO cht_filecontent.
-        APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
-        APPEND '' TO cht_filecontent.
-      ENDIF.
-      AT NEW id.
-        APPEND '' TO cht_filecontent.
-      ENDAT.
-
-      AT NEW item.
-        IF ls_result-item <> t_meaning.
-*          APPEND |{ ls_result-id WIDTH = 3 }{ ls_result-value WIDTH = 40 }| TO et_filecontent.
-*        ELSE.
-          APPEND |{ ls_result-item WIDTH = 15 }| TO cht_filecontent.
-        ENDIF.
-      ENDAT.
-      IF ls_result-item = t_meaning.
-        APPEND |{ ls_result-id WIDTH = 12 }{ ls_result-value WIDTH = 15 }| TO cht_filecontent.
-      ELSE.
-        APPEND |{ ls_result-attr WIDTH = 18 }{ cl_abap_char_utilities=>horizontal_tab }{ ls_result-value WIDTH = 36 }| TO cht_filecontent.
-      ENDIF.
-
-    ENDLOOP.
-
-  ENDMETHOD.
 
   METHOD get_text_page_content.
     TYPES: BEGIN OF ty_page_array,
@@ -813,7 +465,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_FMT IMPLEMENTATION.
       TABLES
         dfies_tab = lt_fieldattr
       EXCEPTIONS
-        OTHERS    = 0.
+        NOT_FOUND = 1
+        OTHERS    = 2.
+    CHECK sy-subrc = 0.
 
     CALL FUNCTION 'DDIF_FIELDINFO_GET'
       EXPORTING
@@ -821,7 +475,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_FMT IMPLEMENTATION.
       TABLES
         dfies_tab = lt_fieldattr2
       EXCEPTIONS
-        OTHERS    = 0.
+        NOT_FOUND = 1
+        OTHERS    = 2.
+    CHECK sy-subrc = 0.
 
     var2 = 1.
 
@@ -1031,6 +687,388 @@ CLASS ZCL_UTILITY_ABAPTOGIT_FMT IMPLEMENTATION.
 
   ENDMETHOD.
 
+
+  METHOD get_text_paragraph_content.
+    DATA: var1                      LIKE sy-index.
+    DATA: var2                      LIKE sy-index.
+    DATA: var3                      LIKE sy-index.
+    DATA: lt_paragraphs             TYPE tty_itcdp.
+    DATA: lt_tabs                    TYPE tty_itcdq.
+    DATA: lt_fieldattr              TYPE STANDARD TABLE OF dfies INITIAL SIZE 0.
+    DATA: lt_para_table             TYPE REF TO   cl_abap_tabledescr.
+    DATA: lt_para_struct            TYPE REF TO   cl_abap_structdescr.
+    DATA: lt_para_components        TYPE          abap_compdescr_tab.
+    DATA: lt_results                TYPE tty_result.
+    DATA: ls_result                 TYPE ts_result.
+    DATA: entry.
+    FIELD-SYMBOLS: <f1> TYPE any, <f2> TYPE any, <f3> TYPE any.
+
+    lt_paragraphs = it_paragraphs.
+
+    CALL FUNCTION 'DDIF_FIELDINFO_GET'
+      EXPORTING
+        tabname   = 'ITCDP'
+      TABLES
+        dfies_tab = lt_fieldattr
+      EXCEPTIONS
+        NOT_FOUND = 1
+        OTHERS    = 2.
+    CHECK sy-subrc = 0.
+
+    var2 = 1.
+
+    lt_para_table ?= cl_abap_typedescr=>describe_by_data( lt_paragraphs ).
+    lt_para_struct ?= lt_para_table->get_table_line_type( ).
+    lt_para_components = lt_para_struct->components.
+
+    DATA: ls_para_attr TYPE ty_string_array.
+    DATA: lt_para_standardattr TYPE STANDARD TABLE OF ty_string_array.
+    DATA: lt_para_fontattr TYPE STANDARD TABLE OF ty_string_array.
+    DATA: lt_para_outlineattr TYPE STANDARD TABLE OF ty_string_array.
+
+************************ PARAGRAPHS Standard attribute *****************************
+    ls_para_attr-name = 'TDPLDIST'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPLDISTU'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDNOBLANKS'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPTOP'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPTOPU'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPBOT'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPBOTU'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPLEFT'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPLEFTU'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPRIGHT'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPRIGHTU'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPENTRY'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPENTRYU'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPJUSTIFY'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPPROTNEX'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+    ls_para_attr-name = 'TDPPROTPAG'.
+    APPEND ls_para_attr TO lt_para_standardattr.
+
+************************ PARAGRAPHS Font attribute *********************************
+    ls_para_attr-name = 'TDFAMILY'.
+    APPEND ls_para_attr TO lt_para_fontattr.
+    ls_para_attr-name = 'TDHEIGHT'.
+    APPEND ls_para_attr TO lt_para_fontattr.
+    ls_para_attr-name = 'TDBOLD'.
+    APPEND ls_para_attr TO lt_para_fontattr.
+    ls_para_attr-name = 'TDITALIC'.
+    APPEND ls_para_attr TO lt_para_fontattr.
+    ls_para_attr-name = 'TDUNDERLIN'.
+    APPEND ls_para_attr TO lt_para_fontattr.
+    ls_para_attr-name = 'TDULPOS'.
+    APPEND ls_para_attr TO lt_para_fontattr.
+    ls_para_attr-name = 'TDULPOSU'.
+    APPEND ls_para_attr TO lt_para_fontattr.
+    ls_para_attr-name = 'TDULTHICK'.
+    APPEND ls_para_attr TO lt_para_fontattr.
+    ls_para_attr-name = 'TDULTHICKU'.
+    APPEND ls_para_attr TO lt_para_fontattr.
+    ls_para_attr-name = 'TDULGREY'.
+    APPEND ls_para_attr TO lt_para_fontattr.
+    ls_para_attr-name = 'TDUNDERLIN'.
+    APPEND ls_para_attr TO lt_para_fontattr.
+************************ PARAGRAPHS outline attribute *********************************
+    ls_para_attr-name = 'TDLFIRSTPA'.
+    APPEND ls_para_attr TO lt_para_outlineattr.
+    ls_para_attr-name = 'TDLDEPTH'.
+    APPEND ls_para_attr TO lt_para_outlineattr.
+    ls_para_attr-name = 'TDLCHAINED'.
+    APPEND ls_para_attr TO lt_para_outlineattr.
+    ls_para_attr-name = 'TDNUMBERIN'.
+    APPEND ls_para_attr TO lt_para_outlineattr.
+    ls_para_attr-name = 'TDNUMOUTL'.
+    APPEND ls_para_attr TO lt_para_outlineattr.
+    ls_para_attr-name = 'TDNUMFIXC'.
+    APPEND ls_para_attr TO lt_para_outlineattr.
+    ls_para_attr-name = 'TDLSTRING'.
+    APPEND ls_para_attr TO lt_para_outlineattr.
+    ls_para_attr-name = 'TDNUMLEFT'.
+    APPEND ls_para_attr TO lt_para_outlineattr.
+    ls_para_attr-name = 'TDNUMLEFTU'.
+    APPEND ls_para_attr TO lt_para_outlineattr.
+    ls_para_attr-name = 'TDLFIRSTC'.
+    APPEND ls_para_attr TO lt_para_outlineattr.
+    ls_para_attr-name = 'TDLLASTC'.
+    APPEND ls_para_attr TO lt_para_outlineattr.
+
+    LOOP AT lt_paragraphs INTO DATA(lv_paragraph).
+      ASSIGN lv_paragraph TO <f1>.
+      var1 = 0.
+      MOVE lv_paragraph-tdpargraph TO ls_result-id.
+      MOVE t_meaning TO ls_result-item.
+      MOVE lv_paragraph-tdtext TO ls_result-value.
+      var3 = var2.
+      APPEND ls_result TO lt_results.
+      CLEAR: ls_result-item, ls_result-value.
+      ADD 1 TO var2.
+
+************************ Standard attribute ****************************
+      MOVE 'Standard attribute' TO ls_result-item.
+      LOOP AT lt_para_standardattr INTO DATA(wa_stdattr_itcdp).
+        ASSIGN wa_stdattr_itcdp-name TO <f2>.
+        ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
+        READ TABLE lt_fieldattr INTO DATA(wa_fieldattr) WITH KEY tabname = 'ITCDP'
+                                    fieldname = <f2>
+                                    langu = sy-langu.
+        MOVE wa_fieldattr-scrtext_m TO ls_result-attr.
+        MOVE <f3> TO ls_result-value.
+        APPEND ls_result TO lt_results.
+        CLEAR: ls_result-attr, ls_result-value.
+        entry = abap_true.
+        ADD 1 TO var2.
+      ENDLOOP.
+
+      CLEAR ls_result-item.
+      MOVE 'Font Attributes' TO ls_result-item.
+      entry = abap_false.
+      LOOP AT lt_para_fontattr INTO DATA(wa_fontattr_itcdp).
+        ASSIGN wa_fontattr_itcdp-name TO <f2>.
+        ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
+        READ TABLE lt_fieldattr INTO wa_fieldattr WITH KEY tabname = 'ITCDP'
+                                    fieldname = <f2>
+                                    langu = sy-langu.
+        MOVE wa_fieldattr-scrtext_m TO ls_result-attr.
+
+        MOVE <f3> TO ls_result-value.
+        APPEND ls_result TO lt_results.
+        CLEAR: ls_result-attr, ls_result-value.
+        entry = abap_true.
+        ADD 1 TO var2.
+      ENDLOOP.
+      IF entry = abap_true.
+        ADD 1 TO var1.
+      ENDIF.
+
+      CLEAR ls_result-item.
+      MOVE 'Outline Attributes' TO ls_result-item.
+      entry = abap_false.
+      LOOP AT lt_para_outlineattr INTO DATA(wa_outlineattr_itcdp).
+        ASSIGN wa_outlineattr_itcdp-name TO <f2>.
+        ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
+        READ TABLE lt_fieldattr INTO wa_fieldattr WITH KEY tabname = 'ITCDP'
+                                    fieldname = <f2>
+                                    langu = sy-langu.
+        MOVE wa_fieldattr-scrtext_m TO ls_result-attr.
+
+        MOVE <f3> TO ls_result-value.
+        APPEND ls_result TO lt_results.
+        CLEAR: ls_result-attr, ls_result-value.
+        entry = abap_true.
+        ADD 1 TO var2.
+      ENDLOOP.
+
+      CLEAR ls_result-item.
+      MOVE 'Tabs' TO ls_result-item.
+      entry = abap_false.
+      LOOP AT lt_tabs INTO DATA(lv_tabs) WHERE tdpargraph = lv_paragraph-tdpargraph.
+        MOVE lv_tabs-tdtabpos TO ls_result-attr+0(8).
+        MOVE lv_tabs-tdtabposu TO ls_result-attr+8(2).
+        CONDENSE ls_result-attr.
+        MOVE lv_tabs-tdtjustify TO ls_result-value.
+        APPEND ls_result TO lt_results.
+        CLEAR: ls_result-attr, ls_result-value.
+        entry = abap_true.
+        ADD 1 TO var2.
+      ENDLOOP.
+
+    ENDLOOP.
+    IF entry = abap_true.
+      ADD 1 TO var1.
+    ENDIF.
+    READ TABLE lt_results INTO ls_result INDEX var3.
+    ls_result-vol = var2 - var3 + var1.
+    MODIFY lt_results FROM ls_result INDEX var3.
+    CLEAR ls_result-vol.
+
+    APPEND '' TO cht_filecontent.
+    LOOP AT lt_results INTO ls_result.
+      IF sy-tabix = 1.
+        APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
+        APPEND |Paragraphs    Attributes| TO cht_filecontent.
+        APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
+        APPEND '' TO cht_filecontent.
+      ENDIF.
+      AT NEW id.
+        APPEND '' TO cht_filecontent.
+      ENDAT.
+
+      AT NEW item.
+        IF ls_result-item <> t_meaning.
+          APPEND |{ ls_result-item WIDTH = 15 }| TO cht_filecontent.
+        ENDIF.
+      ENDAT.
+      IF ls_result-item = t_meaning.
+        APPEND |{ ls_result-id WIDTH = 12 }{ ls_result-value WIDTH = 15 }| TO cht_filecontent.
+      ELSE.
+        APPEND |{ ls_result-attr WIDTH = 18 }{ cl_abap_char_utilities=>horizontal_tab }{ ls_result-value WIDTH = 36 }| TO cht_filecontent.
+      ENDIF.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
+  METHOD get_text_string_content.
+
+    DATA: lt_fieldattr TYPE STANDARD TABLE OF dfies INITIAL SIZE 0.
+    DATA: var1                      LIKE sy-index.
+    DATA: var2                      LIKE sy-index.
+    DATA: var3                      LIKE sy-index.
+    DATA: lt_string_table           TYPE REF TO   cl_abap_tabledescr.
+    DATA: lt_string_struct          TYPE REF TO   cl_abap_structdescr.
+    DATA: lt_string_components      TYPE          abap_compdescr_tab.
+    DATA: lt_strings                TYPE tty_itcds.
+    DATA: lt_results                TYPE tty_result.
+    DATA: ls_result                 TYPE ts_result.
+    DATA: entry.
+    FIELD-SYMBOLS: <f1> TYPE any, <f2> TYPE any, <f3> TYPE any.
+
+    lt_strings = it_strings.
+    lt_string_table ?= cl_abap_typedescr=>describe_by_data( lt_strings ).
+    lt_string_struct ?= lt_string_table->get_table_line_type( ).
+    lt_string_components = lt_string_struct->components.
+
+    DATA: ls_string_attr TYPE ty_string_array.
+    DATA: lt_string_standardattr TYPE STANDARD TABLE OF ty_string_array.
+    DATA: lt_string_fontattr TYPE STANDARD TABLE OF ty_string_array.
+
+************************ Standard attribute *****************************
+    ls_string_attr-name = 'TDMARK'.
+    APPEND ls_string_attr TO lt_string_standardattr.
+    ls_string_attr-name = 'TDPROTLINE'.
+    APPEND ls_string_attr TO lt_string_standardattr.
+    ls_string_attr-name = 'TDHIDDEN'.
+    APPEND ls_string_attr TO lt_string_standardattr.
+    ls_string_attr-name = 'TDSUPER'.
+    APPEND ls_string_attr TO lt_string_standardattr.
+    ls_string_attr-name = 'TDBARCODE'.
+    APPEND ls_string_attr TO lt_string_standardattr.
+
+************************ Font attribute *********************************
+    ls_string_attr-name = 'TDFAMILY'.
+    APPEND ls_string_attr TO lt_string_fontattr.
+    ls_string_attr-name = 'TDHEIGHT'.
+    APPEND ls_string_attr TO lt_string_fontattr.
+    ls_string_attr-name = 'TDBOLD'.
+    APPEND ls_string_attr TO lt_string_fontattr.
+    ls_string_attr-name = 'TDITALIC'.
+    APPEND ls_string_attr TO lt_string_fontattr.
+    ls_string_attr-name = 'TDUNDERLIN'.
+    APPEND ls_string_attr TO lt_string_fontattr.
+    ls_string_attr-name = 'TDULPOS'.
+    APPEND ls_string_attr TO lt_string_fontattr.
+    ls_string_attr-name = 'TDULTHICK'.
+    APPEND ls_string_attr TO lt_string_fontattr.
+    ls_string_attr-name = 'TDULGREY'.
+    APPEND ls_string_attr TO lt_string_fontattr.
+    ls_string_attr-name = 'TDUNDERLIN'.
+    APPEND ls_string_attr TO lt_string_fontattr.
+
+    CALL FUNCTION 'DDIF_FIELDINFO_GET'
+      EXPORTING
+        tabname   = 'ITCDS'
+      TABLES
+        dfies_tab = lt_fieldattr
+      EXCEPTIONS
+        NOT_FOUND = 1
+        OTHERS    = 2.
+    CHECK sy-subrc = 0.
+
+    var2 = 1.
+
+    LOOP AT lt_strings INTO DATA(lv_string).
+      ASSIGN lv_string TO <f1>.
+
+      var1 = 0.
+      MOVE lv_string-tdstring TO ls_result-id.
+      MOVE t_meaning TO ls_result-item.
+      MOVE lv_string-tdtext TO ls_result-value.
+      var3 = var2.
+      APPEND ls_result TO lt_results.
+      CLEAR: ls_result-item, ls_result-value.
+      ADD 1 TO var2.
+
+      MOVE 'Standard Attributes' TO ls_result-item.
+      entry = abap_false.
+      LOOP AT lt_string_standardattr INTO DATA(wa_stdattr_itcds).
+        ASSIGN wa_stdattr_itcds-name TO <f2>.
+        ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
+        READ TABLE lt_fieldattr INTO DATA(wa_fieldattr) WITH KEY tabname = 'ITCDS'
+                                    fieldname = <f2>
+                                    langu = sy-langu.
+        MOVE wa_fieldattr-scrtext_m TO ls_result-attr.
+        MOVE <f3> TO ls_result-value.
+        APPEND ls_result TO lt_results.
+        CLEAR: ls_result-attr, ls_result-value.
+        entry = abap_true.
+        ADD 1 TO var2.
+      ENDLOOP.
+
+      MOVE 'Font Attributes' TO ls_result-item.
+      entry = abap_false.
+      LOOP AT lt_string_fontattr INTO DATA(wa_fontattr_itcds).
+        ASSIGN wa_fontattr_itcds-name TO <f2>.
+        ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
+        READ TABLE lt_fieldattr INTO wa_fieldattr WITH KEY tabname = 'ITCDS'
+                                    fieldname = <f2>
+                                    langu = sy-langu.
+        MOVE wa_fieldattr-scrtext_m TO ls_result-attr.
+
+        MOVE <f3> TO ls_result-value.
+        APPEND ls_result TO lt_results.
+        CLEAR: ls_result-attr, ls_result-value.
+        entry = abap_true.
+        ADD 1 TO var2.
+      ENDLOOP.
+
+    ENDLOOP.
+
+    CLEAR ls_result.
+
+    LOOP AT lt_results INTO ls_result.
+      IF sy-tabix = 1.
+        APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
+        APPEND |Characters    Attributes| TO cht_filecontent.
+        APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
+        APPEND '' TO cht_filecontent.
+      ENDIF.
+      AT NEW id.
+        APPEND '' TO cht_filecontent.
+      ENDAT.
+
+      AT NEW item.
+        IF ls_result-item <> t_meaning.
+
+          APPEND |{ ls_result-item WIDTH = 15 }| TO cht_filecontent.
+        ENDIF.
+      ENDAT.
+      IF ls_result-item = t_meaning.
+        APPEND |{ ls_result-id WIDTH = 12 }{ ls_result-value WIDTH = 15 }| TO cht_filecontent.
+      ELSE.
+        APPEND |{ ls_result-attr WIDTH = 18 }{ cl_abap_char_utilities=>horizontal_tab }{ ls_result-value WIDTH = 36 }| TO cht_filecontent.
+      ENDIF.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
   METHOD get_text_txtelement_content.
     TYPES: BEGIN OF ty_intertab,
              flag(1),
@@ -1130,4 +1168,102 @@ CLASS ZCL_UTILITY_ABAPTOGIT_FMT IMPLEMENTATION.
 
   ENDMETHOD.
 
+
+  METHOD get_text_windows_content.
+
+    DATA: ls_window_attr TYPE ty_string_array.
+    DATA: lt_window_attr TYPE STANDARD TABLE OF ty_string_array.
+    DATA: lt_fieldattr              TYPE STANDARD TABLE OF dfies INITIAL SIZE 0.
+    DATA: var1                      LIKE sy-index.
+    DATA: var2                      LIKE sy-index.
+    DATA: var3                      LIKE sy-index.
+    DATA: lt_windows                TYPE tty_itctw.
+    DATA: lt_results                TYPE tty_result.
+    DATA: ls_result                 TYPE ts_result.
+    DATA: entry.
+
+    FIELD-SYMBOLS: <f1> TYPE any, <f2> TYPE any, <f3> TYPE any.
+
+    lt_windows = it_windows.
+************************ Window attribute *****************************
+    ls_window_attr-name = 'TDWTYPE'.
+    APPEND ls_window_attr TO lt_window_attr.
+    ls_window_attr-name = 'TDFIRSTPAR'.
+    APPEND ls_window_attr TO lt_window_attr.
+    ls_window_attr-name = 'TDWTYPE'.
+    APPEND ls_window_attr TO lt_window_attr.
+
+
+    CALL FUNCTION 'DDIF_FIELDINFO_GET'
+      EXPORTING
+        tabname   = 'ITCTW'
+      TABLES
+        dfies_tab = lt_fieldattr
+      EXCEPTIONS
+        NOT_FOUND = 1
+        OTHERS    = 2.
+    CHECK sy-subrc = 0.
+
+    var2 = 1.
+
+    LOOP AT lt_windows INTO DATA(lv_window).
+      ASSIGN lv_window TO <f1>.
+      MOVE lv_window-tdwindow TO ls_result-id.
+      MOVE t_meaning TO ls_result-item.
+      MOVE lv_window-tdtext TO ls_result-value.
+      var3 = var2.
+      APPEND ls_result TO lt_results.
+      CLEAR: ls_result-item, ls_result-value.
+      ADD 1 TO var2.
+
+      LOOP AT lt_window_attr INTO DATA(wa_window_attr_itctw).
+        ASSIGN wa_window_attr_itctw-name TO <f2>.
+        ASSIGN COMPONENT <f2> OF STRUCTURE <f1> TO <f3>.
+        READ TABLE lt_fieldattr INTO DATA(wa_fieldattr) WITH KEY tabname = 'ITCTW'
+                                    fieldname = <f2>
+                                    langu = sy-langu.
+        MOVE wa_fieldattr-scrtext_m TO ls_result-attr.
+        MOVE <f3> TO ls_result-value.
+        APPEND ls_result TO lt_results.
+        CLEAR: ls_result-attr, ls_result-value.
+        entry = abap_true.
+        ADD 1 TO var2.
+      ENDLOOP.
+
+      READ TABLE lt_results INTO ls_result INDEX var3.
+      ls_result-vol = var2 - var3 + var1.
+      MODIFY lt_results FROM ls_result INDEX var3.
+      CLEAR ls_result-vol.
+
+    ENDLOOP.
+
+    APPEND '' TO cht_filecontent.
+
+    LOOP AT lt_results INTO ls_result.
+      IF sy-tabix = 1.
+        APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
+        APPEND |Windows       Attributes| TO cht_filecontent.
+        APPEND |{ space WIDTH = 80 PAD = '-' }| TO cht_filecontent.
+        APPEND '' TO cht_filecontent.
+      ENDIF.
+      AT NEW id.
+        APPEND '' TO cht_filecontent.
+      ENDAT.
+
+      AT NEW item.
+        IF ls_result-item <> t_meaning.
+*          APPEND |{ ls_result-id WIDTH = 3 }{ ls_result-value WIDTH = 40 }| TO et_filecontent.
+*        ELSE.
+          APPEND |{ ls_result-item WIDTH = 15 }| TO cht_filecontent.
+        ENDIF.
+      ENDAT.
+      IF ls_result-item = t_meaning.
+        APPEND |{ ls_result-id WIDTH = 12 }{ ls_result-value WIDTH = 15 }| TO cht_filecontent.
+      ELSE.
+        APPEND |{ ls_result-attr WIDTH = 18 }{ cl_abap_char_utilities=>horizontal_tab }{ ls_result-value WIDTH = 36 }| TO cht_filecontent.
+      ENDIF.
+
+    ENDLOOP.
+
+  ENDMETHOD.
 ENDCLASS.
