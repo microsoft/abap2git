@@ -7,12 +7,14 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
   PUBLIC SECTION.
 
     " latest and active version mode
-    CONSTANTS: c_latest_version        TYPE string VALUE 'latest',
-               c_active_version        TYPE string VALUE 'active',
-               c_schemapcr             TYPE string VALUE '.schemapcr',
-               c_config                TYPE string VALUE '.config',
-               c_trobj                 TYPE string VALUE '.trobj',
-               c_varx                  TYPE string VALUE '.varx'.
+    CONSTANTS: c_latest_version TYPE string VALUE 'latest',
+               c_active_version TYPE string VALUE 'active',
+               c_schemapcr      TYPE string VALUE '.schemapcr',
+               c_config         TYPE string VALUE '.config',
+               c_trobj          TYPE string VALUE '.trobj',
+               c_varx           TYPE string VALUE '.varx',
+               c_brf            TYPE string VALUE '.brf',
+               c_brftype        TYPE string VALUE 'BRFP'.
 
     " TR info
     TYPES: BEGIN OF ts_change_object,
@@ -97,13 +99,23 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
 
     " RFC connection for cross-system config table comparison
     TYPES: BEGIN OF ts_rfcconnection,
-            sysid   TYPE sy-sysid,
-            rfcdest TYPE string,
+             sysid   TYPE sy-sysid,
+             rfcdest TYPE string,
            END OF ts_rfcconnection.
     TYPES: tty_rfcconnection TYPE TABLE OF ts_rfcconnection WITH KEY sysid.
 
     " exclusion list
     TYPES: tty_excl_list TYPE TABLE OF string.
+
+    " class info
+    TYPES: BEGIN OF ty_class,
+             name    TYPE string,
+             meth    TYPE string,
+           END OF ty_class.
+    TYPES: tty_classes TYPE TABLE OF ty_class.
+
+    " brf app list
+    TYPES: tty_brf_app TYPE TABLE OF string.
 
     " constructor
     " io_objtelemetry - class object for telemetry
@@ -170,6 +182,17 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
       EXPORTING
                 ev_owner          TYPE string
       RETURNING VALUE(rv_success) TYPE abap_bool.
+
+    " get class info of specific class name
+    " iv_name - class name
+    " it_objversions - class method versions
+    " et_classes - class info list
+    METHODS get_class_info
+        IMPORTING
+                iv_name           TYPE string
+                it_objversions    TYPE tty_version_no
+        EXPORTING
+                et_classes        TYPE tty_classes.
 
     " get ABAP object version number (to fetch specific version's code lines)
     " iv_objname - ABAP object name from table TADIR
@@ -428,7 +451,7 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
                 et_filecontent    TYPE tty_abaptext
       RETURNING VALUE(rv_success) TYPE abap_bool.
 
-      " remark: OOB program RPDASC00 also dumps schema/PCR but takes background job privilege to run
+    " remark: OOB program RPDASC00 also dumps schema/PCR but takes background job privilege to run
     " and then fetch spools log from WRITE output and wait for job finish -- complicated and error prone
     " remark: upon releasing customizing TR the snapshot of schema/PCR is kept though SAP doesn't keep
     " all old versions, it's reliable to keep the snapshot as Git commit at the same time to reflect
@@ -454,15 +477,6 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
       EXPORTING
         et_filecontent TYPE tty_abaptext.
 
-    " find all hierarchical parent packages of a package
-    " iv_package - package name as subpackage
-    " et_packages - package list of parent packages including iv_package
-    METHODS get_parentpackages
-      IMPORTING
-        iv_package  TYPE string
-      EXPORTING
-        et_packages TYPE tty_package.
-
     " find all hierarchical sub packages of a package
     " iv_package - package name as root package
     " et_packages - package list of sub packages including iv_package
@@ -471,12 +485,6 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
         iv_package  TYPE devclass
       EXPORTING
         et_packages TYPE tty_package.
-
-    METHODS get_objtype_hist
-      IMPORTING
-        iv_fromdate TYPE d
-      EXPORTING
-        et_hist     TYPE tty_objtype_hist.
 
   PROTECTED SECTION.
 
@@ -708,6 +716,19 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
     DATA oref_telemetry TYPE REF TO object.
     DATA method_name_telemetry TYPE string.
 
+    " find all hierarchical parent packages of a package
+    METHODS get_parentpackages
+      IMPORTING
+        iv_package  TYPE string
+      EXPORTING
+        et_packages TYPE tty_package.
+
+    METHODS get_objtype_hist
+      IMPORTING
+        iv_fromdate TYPE d
+      EXPORTING
+        et_hist     TYPE tty_objtype_hist.
+
     " process table config change case
     METHODS build_table_config_change
       IMPORTING
@@ -929,17 +950,6 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
         ev_text TYPE string
         ev_leng TYPE i.
 
-    " get remote system table info
-    METHODS get_remote_table_info
-        IMPORTING
-            iv_tabname       TYPE string
-            iv_objtype       TYPE string
-            iv_pgmid         TYPE string
-            iv_mastername    TYPE string
-            iv_mastertype    TYPE string
-            it_rfcconnection TYPE tty_rfcconnection
-      RETURNING VALUE(rv_success) TYPE abap_bool.
-
     " get versions of an ABAP object
     METHODS get_versions
       IMPORTING
@@ -1078,17 +1088,27 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
 
     " get valid file name from table key string
     CLASS-METHODS get_tabkey_filename
-        IMPORTING
-            iv_tabkey TYPE string
-        EXPORTING
-            ev_tabkey TYPE string.
+      IMPORTING
+        iv_tabkey TYPE string
+      EXPORTING
+        ev_tabkey TYPE string.
 
     METHODS get_formatted_json_string
       IMPORTING json_string_in         TYPE string
       RETURNING VALUE(json_string_out) TYPE string
       RAISING   cx_sxml_parse_error.
 
-    " wrapper to write telemetry with the callback registered
+    METHODS BUILD_BRF_XML
+      IMPORTING
+        !IV_CS_REQUEST TYPE TRWBO_REQUEST
+        !IV_OBJNAME TYPE E071-OBJ_NAME
+        !IV_OBJTYPE TYPE E071-OBJECT
+        !IT_EXCL_TBLS TYPE TTY_EXCL_LIST OPTIONAL
+      CHANGING
+        !IT_COMMIT_OBJECTS TYPE TTY_COMMIT_OBJECT
+        !IT_BRFAPP_PROCESSED type TTY_BRF_APP OPTIONAL.
+
+        " wrapper to write telemetry with the callback registered
     METHODS write_telemetry
       IMPORTING
         iv_message TYPE string
@@ -1099,6 +1119,87 @@ ENDCLASS.
 
 
 CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
+
+
+  METHOD BUILD_BRF_XML.
+
+    FIELD-SYMBOLS <fs_cs_request_key> LIKE LINE OF iv_cs_request-keys.
+    DATA lv_filecontent TYPE string.
+    DATA lv_objname TYPE string.
+    DATA lv_objtype TYPE string.
+    DATA lv_tabkey TYPE string.
+    DATA lv_fulltablecount TYPE i.
+    DATA lv_rows TYPE i.
+    DATA lv_tabix TYPE i.
+    DATA lv_append TYPE abap_bool.
+    DATA lv_success TYPE abap_bool.
+    DATA lv_applicationid TYPE fdt_uuid.
+    DATA lv_application_name TYPE string.
+    DATA lv_errormessage TYPE string.
+
+    LOOP AT iv_cs_request-keys ASSIGNING <fs_cs_request_key> WHERE mastertype = iv_objtype AND mastername = iv_objname.
+
+      lv_tabix = sy-tabix.
+      lv_objtype = iv_objtype.
+      lv_objname = <fs_cs_request_key>-objname.
+      TRANSLATE lv_objname TO UPPER CASE.
+
+      IF line_exists( it_excl_tbls[ table_line = lv_objname ] ).
+        CONTINUE.
+      ENDIF.
+
+      lv_tabkey = <fs_cs_request_key>-tabkey.
+      get_tabkey_filename(
+          EXPORTING
+              iv_tabkey = lv_tabkey
+          IMPORTING
+              ev_tabkey = lv_tabkey
+                ).
+
+        " get application id
+      IF lv_objname+0(8) = 'FDT_APPL'.
+        CLEAR : lv_applicationid, lv_filecontent.
+        lv_applicationid = lv_tabkey+3(32).
+      ELSE.
+        CONTINUE.
+      ENDIF.
+
+      IF line_exists( it_brfapp_processed[ table_line = lv_applicationid ] ).
+        CONTINUE.
+      ELSE.
+        APPEND lv_applicationid TO it_brfapp_processed.
+      ENDIF.
+
+      lv_success = zcl_utility_abaptogit_fmt=>GET_BRF_XML_CONTENT(
+        EXPORTING
+            iv_applicationid = lv_applicationid
+        IMPORTING
+            ev_xmlcontent = lv_filecontent
+            ev_xmlappname = lv_application_name
+            ev_errormessage = lv_errormessage
+              ).
+
+      IF lv_success <> abap_true.
+        me->write_telemetry( iv_message = |fail to get BRF plus content for { lv_applicationid } { lv_errormessage }| ).
+        CONTINUE.
+      ENDIF.
+
+      APPEND VALUE ts_commit_object(
+          devclass = c_brf
+          objname = lv_application_name
+          objtype = c_brftype
+          objtype2 = c_brftype
+          fugr = ''
+          progcls = ''
+          delflag = abap_false
+          verno = 1
+          filecontent = lv_filecontent
+          tblkey = lv_applicationid
+          ) TO it_commit_objects.
+
+    ENDLOOP.
+
+  ENDMETHOD.
 
 
   METHOD build_code_content.
@@ -1289,63 +1390,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
   ENDMETHOD.
 
-  METHOD build_msad_content.
-    DATA ls_msad_obj TYPE ty_msad_obj.
-
-    rv_success = me->get_msad_content(
-        EXPORTING
-            iv_objname = iv_objname
-            iv_version = iv_version
-        IMPORTING
-            ev_messobj = ls_msad_obj
-             ).
-    CHECK rv_success = abap_true.
-
-    /ui2/cl_json=>serialize(
-        EXPORTING
-            !data = ls_msad_obj
-            pretty_name = /ui2/cl_json=>pretty_mode-low_case
-        RECEIVING
-            r_json = ev_filecontent
-             ).
-
-    ev_filecontent  = get_formatted_json_string( ev_filecontent ).
-    SPLIT ev_filecontent AT cl_abap_char_utilities=>newline INTO TABLE et_filecontent.
-
-    " align with GUI_DOWNLOAD which adds a blank line
-    ev_filecontent = ev_filecontent && cl_abap_char_utilities=>cr_lf.
-
-    rv_success = abap_true.
-  ENDMETHOD.
-
-  METHOD build_single_message_content.
-    DATA ls_mess_obj TYPE ty_mess_obj.
-
-    rv_success = me->get_single_message_content(
-        EXPORTING
-            iv_objname = iv_objname
-            iv_version = iv_version
-        IMPORTING
-            ev_messobj = ls_mess_obj
-             ).
-    CHECK rv_success = abap_true.
-
-    /ui2/cl_json=>serialize(
-        EXPORTING
-            !data = ls_mess_obj
-            pretty_name = /ui2/cl_json=>pretty_mode-low_case
-        RECEIVING
-            r_json = ev_filecontent
-             ).
-
-    ev_filecontent  = get_formatted_json_string( ev_filecontent ).
-    SPLIT ev_filecontent AT cl_abap_char_utilities=>newline INTO TABLE et_filecontent.
-
-    " align with GUI_DOWNLOAD which adds a blank line
-    ev_filecontent = ev_filecontent && cl_abap_char_utilities=>cr_lf.
-
-    rv_success = abap_true.
-  ENDMETHOD.
 
   METHOD build_data_table_content.
 
@@ -1472,120 +1516,120 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       ENDIF.
 
       IF iv_deltastats = abap_false.
-          lv_tabkey = wakey-tabkey.
-          get_tabkey_filename(
-              EXPORTING
-                  iv_tabkey = lv_tabkey
-              IMPORTING
-                  ev_tabkey = lv_tabkey
-                   ).
-
-          " multiple object lines may refer to the same tables
-          IF line_exists( it_commit_objects[ objname = wakey-objname objtype = wakey-object tblkey = lv_tabkey ] ).
-            ASSIGN it_commit_objects[ objname = wakey-objname objtype = wakey-object tblkey = lv_tabkey ] TO <fs_commit_object>.
-            lv_row = <fs_commit_object>-rows.
-            lv_success = me->get_config_lines_header(
-                EXPORTING
-                    iv_tabname = wakey-objname
-                    iv_request = iv_cs_request
-                IMPORTING
-                    ev_desc = ls_data_table_desc
-                CHANGING
-                    abaptext = lt_filecontent_dummy
-                 ).
-            CHECK lv_success = abap_true.
-            lv_append = abap_true.
-          ELSE.
-            lv_row = 1.
-            lv_success = me->get_config_lines_header(
-                EXPORTING
-                    iv_tabname = wakey-objname
-                    iv_request = iv_cs_request
-                IMPORTING
-                    ev_desc = ls_data_table_desc
-                CHANGING
-                    abaptext = lt_filecontent
-                 ).
-            CHECK lv_success = abap_true.
-            IF iv_deltastats = abap_false.
-              APPEND |Key: { wakey-tabkey }| TO lt_filecontent.
-              APPEND '' TO lt_filecontent.
-              APPEND 'Rows:' TO lt_filecontent.
-              APPEND '' TO lt_filecontent.
-            ENDIF.
-            lv_append = abap_false.
-          ENDIF.
-
-          " get texts of each row's column values
-          CLEAR lt_keys_part.
-          APPEND wakey TO lt_keys_part.
-          lv_tabname = wakey-objname.
-          CALL FUNCTION 'SRTT_TABLE_GET_BY_KEYLIST'
+        lv_tabkey = wakey-tabkey.
+        get_tabkey_filename(
             EXPORTING
-              tabname   = lv_tabname
-              mtype     = wakey-mastertype
-              mtabname  = wakey-mastername
-            TABLES
-              e071k_tab = lt_keys_part
-              entry_tab = lt_entry_tab
-            EXCEPTIONS
-              OTHERS    = 1.
-          IF sy-subrc <> 0.
-            me->write_telemetry( iv_message = |BUILD_LOGICAL_CONFIG_CHANGE fails in SRTT_TABLE_GET_BY_KEYLIST call with { lv_tabname }| ).
-          ENDIF.
+                iv_tabkey = lv_tabkey
+            IMPORTING
+                ev_tabkey = lv_tabkey
+                 ).
 
-          " extract field values from entry line text
-          " full column values besides keys
-          LOOP AT lt_entry_tab ASSIGNING <fs_entry>.
-            IF iv_deltastats = abap_false.
-              APPEND |Row { lv_row }| TO lt_filecontent.
-              lv_line = <fs_entry>.
-              me->get_column_values(
-                  EXPORTING
-                      iv_data_table_desc = ls_data_table_desc
-                      iv_line = lv_line
-                   CHANGING
-                      cht_filecontent = lt_filecontent
-                       ).
-              APPEND '' TO lt_filecontent.
-            ENDIF.
-            lv_row = lv_row + 1.
-          ENDLOOP.
-
-          " if no rows are written, the rows are deleted in the TR
-          IF lines( lt_entry_tab ) = 0.
-            APPEND '(Row(s) for the table key are deleted in the TR)' to lt_filecontent.
-          ENDIF.
-
+        " multiple object lines may refer to the same tables
+        IF line_exists( it_commit_objects[ objname = wakey-objname objtype = wakey-object tblkey = lv_tabkey ] ).
+          ASSIGN it_commit_objects[ objname = wakey-objname objtype = wakey-object tblkey = lv_tabkey ] TO <fs_commit_object>.
+          lv_row = <fs_commit_object>-rows.
+          lv_success = me->get_config_lines_header(
+              EXPORTING
+                  iv_tabname = wakey-objname
+                  iv_request = iv_cs_request
+              IMPORTING
+                  ev_desc = ls_data_table_desc
+              CHANGING
+                  abaptext = lt_filecontent_dummy
+               ).
+          CHECK lv_success = abap_true.
+          lv_append = abap_true.
+        ELSE.
+          lv_row = 1.
+          lv_success = me->get_config_lines_header(
+              EXPORTING
+                  iv_tabname = wakey-objname
+                  iv_request = iv_cs_request
+              IMPORTING
+                  ev_desc = ls_data_table_desc
+              CHANGING
+                  abaptext = lt_filecontent
+               ).
+          CHECK lv_success = abap_true.
           IF iv_deltastats = abap_false.
-            IF lv_append = abap_true.
-              lv_filecontent = <fs_commit_object>-filecontent && concat_lines_of( table = lt_filecontent sep = cl_abap_char_utilities=>cr_lf ).
-            ELSE.
-              lv_filecontent = concat_lines_of( table = lt_filecontent sep = cl_abap_char_utilities=>cr_lf ).
-            ENDIF.
-            " align with GUI_DOWNLOAD which adds a blank line
-            lv_filecontent = lv_filecontent && cl_abap_char_utilities=>cr_lf.
+            APPEND |Key: { wakey-tabkey }| TO lt_filecontent.
+            APPEND '' TO lt_filecontent.
+            APPEND 'Rows:' TO lt_filecontent.
+            APPEND '' TO lt_filecontent.
           ENDIF.
+          lv_append = abap_false.
+        ENDIF.
 
-          IF lv_append = abap_true.
-            <fs_commit_object>-rows = lv_row.
-            <fs_commit_object>-filecontent = lv_filecontent.
-          ELSE.
-            APPEND VALUE ts_commit_object(
-                devclass = c_config
-                objname = wakey-objname
-                objtype = wakey-object
-                objtype2 = wakey-object
-                fugr = ''
-                progcls = 'delta'
-                tblkey = lv_tabkey
-                delflag = abap_false
-                verno = 1
-                filecontent = lv_filecontent
-                tables = 1
-                rows = lv_row
-                ) TO it_commit_objects.
+        " get texts of each row's column values
+        CLEAR lt_keys_part.
+        APPEND wakey TO lt_keys_part.
+        lv_tabname = wakey-objname.
+        CALL FUNCTION 'SRTT_TABLE_GET_BY_KEYLIST'
+          EXPORTING
+            tabname   = lv_tabname
+            mtype     = wakey-mastertype
+            mtabname  = wakey-mastername
+          TABLES
+            e071k_tab = lt_keys_part
+            entry_tab = lt_entry_tab
+          EXCEPTIONS
+            OTHERS    = 1.
+        IF sy-subrc <> 0.
+          me->write_telemetry( iv_message = |BUILD_LOGICAL_CONFIG_CHANGE fails in SRTT_TABLE_GET_BY_KEYLIST call with { lv_tabname }| ).
+        ENDIF.
+
+        " extract field values from entry line text
+        " full column values besides keys
+        LOOP AT lt_entry_tab ASSIGNING <fs_entry>.
+          IF iv_deltastats = abap_false.
+            APPEND |Row { lv_row }| TO lt_filecontent.
+            lv_line = <fs_entry>.
+            me->get_column_values(
+                EXPORTING
+                    iv_data_table_desc = ls_data_table_desc
+                    iv_line = lv_line
+                 CHANGING
+                    cht_filecontent = lt_filecontent
+                     ).
+            APPEND '' TO lt_filecontent.
           ENDIF.
+          lv_row = lv_row + 1.
+        ENDLOOP.
+
+        " if no rows are written, the rows are deleted in the TR
+        IF lines( lt_entry_tab ) = 0.
+          APPEND '(Row(s) for the table key are deleted in the TR)' TO lt_filecontent.
+        ENDIF.
+
+        IF iv_deltastats = abap_false.
+          IF lv_append = abap_true.
+            lv_filecontent = <fs_commit_object>-filecontent && concat_lines_of( table = lt_filecontent sep = cl_abap_char_utilities=>cr_lf ).
+          ELSE.
+            lv_filecontent = concat_lines_of( table = lt_filecontent sep = cl_abap_char_utilities=>cr_lf ).
+          ENDIF.
+          " align with GUI_DOWNLOAD which adds a blank line
+          lv_filecontent = lv_filecontent && cl_abap_char_utilities=>cr_lf.
+        ENDIF.
+
+        IF lv_append = abap_true.
+          <fs_commit_object>-rows = lv_row.
+          <fs_commit_object>-filecontent = lv_filecontent.
+        ELSE.
+          APPEND VALUE ts_commit_object(
+              devclass = c_config
+              objname = wakey-objname
+              objtype = wakey-object
+              objtype2 = wakey-object
+              fugr = ''
+              progcls = 'delta'
+              tblkey = lv_tabkey
+              delflag = abap_false
+              verno = 1
+              filecontent = lv_filecontent
+              tables = 1
+              rows = lv_row
+              ) TO it_commit_objects.
+        ENDIF.
       ENDIF.
 
       " currently full table dump is disabled, don't attempt to run into following part
@@ -1670,6 +1714,41 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     ENDLOOP.
 
+  ENDMETHOD.
+
+
+  METHOD build_message_class_change.
+
+  ENDMETHOD.
+
+
+  METHOD build_msad_content.
+    DATA ls_msad_obj TYPE ty_msad_obj.
+
+    rv_success = me->get_msad_content(
+        EXPORTING
+            iv_objname = iv_objname
+            iv_version = iv_version
+        IMPORTING
+            ev_messobj = ls_msad_obj
+             ).
+    CHECK rv_success = abap_true.
+
+    /ui2/cl_json=>serialize(
+        EXPORTING
+            !data = ls_msad_obj
+            pretty_name = /ui2/cl_json=>pretty_mode-low_case
+        RECEIVING
+            r_json = ev_filecontent
+             ).
+
+    ev_filecontent  = get_formatted_json_string( ev_filecontent ).
+    SPLIT ev_filecontent AT cl_abap_char_utilities=>newline INTO TABLE et_filecontent.
+
+    " align with GUI_DOWNLOAD which adds a blank line
+    ev_filecontent = ev_filecontent && cl_abap_char_utilities=>cr_lf.
+
+    rv_success = abap_true.
   ENDMETHOD.
 
 
@@ -1797,7 +1876,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     APPEND |* Owner                 : { ls_desc-respu }| TO et_filecontent.
     APPEND |* Creation Date         : { ls_desc-cdate }| TO et_filecontent.
     APPEND |* Only Changed by Owner : { ls_desc-relea }| TO et_filecontent.
-    APPEND |* Last Changed By       : { ls_desc-uname }| TO et_filecontent.
+*    APPEND |* Last Changed By       : { ls_desc-uname }| TO et_filecontent.
     APPEND |* Last Changed Date     : { ls_desc-udate }| TO et_filecontent.
     APPEND |* Last Changed Time     : { ls_desc-utime }| TO et_filecontent.
 
@@ -1807,7 +1886,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       IF lv_first = abap_true OR wa_instr-abart <> lv_esg OR wa_instr-lgart <> lv_wgt.
         APPEND '' TO et_filecontent.
         " show ES group and wage type
-        APPEND |* ES Group { wa_instr-abart }, Wage/Time Type { wa_instr-lgart }| TO et_filecontent.
+*        APPEND |* ES Group { wa_instr-abart }, Wage/Time Type { wa_instr-lgart }| TO et_filecontent.
         " instruction table header
         APPEND 'Var.Key CL T Operation  Operation  Operation  Operation  Operation  Operation *' TO et_filecontent.
         lv_first = abap_false.
@@ -1861,6 +1940,10 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     lv_objname = iv_objname.
     lv_objtype = iv_objtype.
+
+    " ADO item path treats space as %20
+    TRANSLATE lv_objname USING ' _'.
+
     APPEND VALUE ts_commit_object(
         devclass = c_varx
         objname = lv_objname
@@ -1875,16 +1958,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD build_single_message_change.
-
-  ENDMETHOD.
-
-
-  METHOD build_message_class_change.
-
-  ENDMETHOD.
-
-
   METHOD build_sapscript_change.
 
     DATA lv_filecontent  TYPE string.
@@ -1895,7 +1968,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lt_form_versions TYPE TABLE OF itcformver.
     DATA lv_form TYPE thead-tdform.
 
-    lv_success = ZCL_UTILITY_ABAPTOGIT_FMT=>get_sapscript_content(
+    lv_success = zcl_utility_abaptogit_fmt=>get_sapscript_content(
         EXPORTING
             iv_objname = iv_objname
         IMPORTING
@@ -1903,8 +1976,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
              ).
 
     IF lv_success <> abap_true.
-        me->write_telemetry( iv_message = |fail to get sapscript for { iv_objname }| ).
-        RETURN.
+      me->write_telemetry( iv_message = |fail to get sapscript for { iv_objname }| ).
+      RETURN.
     ENDIF.
 
     lv_filecontent = concat_lines_of( table = lt_filecontent sep = cl_abap_char_utilities=>cr_lf ).
@@ -1913,7 +1986,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     lv_filecontent = lv_filecontent && cl_abap_char_utilities=>cr_lf.
 
     IF line_exists( it_commit_objects[ devclass = iv_devclass objname = iv_objname objtype = lv_objtype ] ).
-        RETURN.
+      RETURN.
     ENDIF.
 
     APPEND VALUE ts_commit_object(
@@ -1961,7 +2034,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     APPEND |* Creation Date         : { ls_desc-cdate }| TO et_filecontent.
     APPEND |* Only Changed by Owner : { ls_desc-execu }| TO et_filecontent.
     APPEND |* Version               : { ls_desc-uvers }| TO et_filecontent.
-    APPEND |* Last Changed By       : { ls_desc-uname }| TO et_filecontent.
+*    APPEND |* Last Changed By       : { ls_desc-uname }| TO et_filecontent.
     APPEND |* Last Changed Date     : { ls_desc-udate }| TO et_filecontent.
     APPEND |* Last Changed Time     : { ls_desc-utime }| TO et_filecontent.
 
@@ -2072,6 +2145,41 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD build_single_message_change.
+
+  ENDMETHOD.
+
+
+  METHOD build_single_message_content.
+    DATA ls_mess_obj TYPE ty_mess_obj.
+
+    rv_success = me->get_single_message_content(
+        EXPORTING
+            iv_objname = iv_objname
+            iv_version = iv_version
+        IMPORTING
+            ev_messobj = ls_mess_obj
+             ).
+    CHECK rv_success = abap_true.
+
+    /ui2/cl_json=>serialize(
+        EXPORTING
+            !data = ls_mess_obj
+            pretty_name = /ui2/cl_json=>pretty_mode-low_case
+        RECEIVING
+            r_json = ev_filecontent
+             ).
+
+    ev_filecontent  = get_formatted_json_string( ev_filecontent ).
+    SPLIT ev_filecontent AT cl_abap_char_utilities=>newline INTO TABLE et_filecontent.
+
+    " align with GUI_DOWNLOAD which adds a blank line
+    ev_filecontent = ev_filecontent && cl_abap_char_utilities=>cr_lf.
+
+    rv_success = abap_true.
+  ENDMETHOD.
+
+
   METHOD build_table_config_change.
 
     FIELD-SYMBOLS <fs_cs_request_key> LIKE LINE OF iv_cs_request-keys.
@@ -2113,57 +2221,57 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       ENDIF.
 
       IF iv_deltastats = abap_false.
-          " get rows for the table key for current one in the loop specified by sy-tabix
-          CLEAR lt_filecontent.
-          lv_success = me->get_config_delta_lines(
-              EXPORTING
-                  iv_tabname = <fs_cs_request_key>-objname
-                  iv_mtabname = <fs_cs_request_key>-mastername
-                  iv_objtype = iv_objtype
-                  iv_tblkeyidx = lv_tabix
-                  iv_request = iv_cs_request
-                  iv_append = lv_append
-                  iv_mode = iv_mode
-                  iv_deltastats = iv_deltastats
-                  it_rfcconnection = it_rfcconnection
-              IMPORTING
-                  abaptext = lt_filecontent
-                  ev_rows = lv_rows
-               ).
-          IF lv_success <> abap_true.
-            me->write_telemetry( iv_message = |fail to get config delta lines for { <fs_cs_request_key>-objname }| ).
-            CONTINUE.
-          ENDIF.
+        " get rows for the table key for current one in the loop specified by sy-tabix
+        CLEAR lt_filecontent.
+        lv_success = me->get_config_delta_lines(
+            EXPORTING
+                iv_tabname = <fs_cs_request_key>-objname
+                iv_mtabname = <fs_cs_request_key>-mastername
+                iv_objtype = iv_objtype
+                iv_tblkeyidx = lv_tabix
+                iv_request = iv_cs_request
+                iv_append = lv_append
+                iv_mode = iv_mode
+                iv_deltastats = iv_deltastats
+                it_rfcconnection = it_rfcconnection
+            IMPORTING
+                abaptext = lt_filecontent
+                ev_rows = lv_rows
+             ).
+        IF lv_success <> abap_true.
+          me->write_telemetry( iv_message = |fail to get config delta lines for { <fs_cs_request_key>-objname }| ).
+          CONTINUE.
+        ENDIF.
 
-          CHECK lv_rows > 0.
+        CHECK lv_rows > 0.
 
-          IF iv_deltastats = abap_false.
-            lv_filecontent = concat_lines_of( table = lt_filecontent sep = cl_abap_char_utilities=>cr_lf ).
-            " align with GUI_DOWNLOAD which adds a blank line
-            lv_filecontent = lv_filecontent && cl_abap_char_utilities=>cr_lf.
-          ENDIF.
+        IF iv_deltastats = abap_false.
+          lv_filecontent = concat_lines_of( table = lt_filecontent sep = cl_abap_char_utilities=>cr_lf ).
+          " align with GUI_DOWNLOAD which adds a blank line
+          lv_filecontent = lv_filecontent && cl_abap_char_utilities=>cr_lf.
+        ENDIF.
 
-          " add new file or append to shared one
-          IF lv_append = abap_false.
-              APPEND VALUE ts_commit_object(
-                  devclass = c_config
-                  objname = lv_objname
-                  objtype = lv_objtype
-                  objtype2 = lv_objtype
-                  fugr = ''
-                  progcls = 'delta'
-                  delflag = abap_false
-                  verno = 1
-                  filecontent = lv_filecontent
-                  tables = 1
-                  rows = lv_rows
-                  tblkey = lv_tabkey
-                  ) TO it_commit_objects.
-          ELSE.
-            it_commit_objects[ objname = lv_objname tblkey = lv_tabkey ]-filecontent =
-                it_commit_objects[ objname = lv_objname tblkey = lv_tabkey ]-filecontent && cl_abap_char_utilities=>cr_lf
-                && lv_filecontent && cl_abap_char_utilities=>cr_lf.
-          ENDIF.
+        " add new file or append to shared one
+        IF lv_append = abap_false.
+          APPEND VALUE ts_commit_object(
+              devclass = c_config
+              objname = lv_objname
+              objtype = lv_objtype
+              objtype2 = lv_objtype
+              fugr = ''
+              progcls = 'delta'
+              delflag = abap_false
+              verno = 1
+              filecontent = lv_filecontent
+              tables = 1
+              rows = lv_rows
+              tblkey = lv_tabkey
+              ) TO it_commit_objects.
+        ELSE.
+          it_commit_objects[ objname = lv_objname tblkey = lv_tabkey ]-filecontent =
+              it_commit_objects[ objname = lv_objname tblkey = lv_tabkey ]-filecontent && cl_abap_char_utilities=>cr_lf
+              && lv_filecontent && cl_abap_char_utilities=>cr_lf.
+        ENDIF.
       ENDIF.
 
       " currently full table dump is disabled, don't attempt to run into following part
@@ -2768,6 +2876,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lv_lineoffset TYPE i.
     DATA lv_field(33) TYPE c.
     DATA lv_value TYPE string.
+    DATA lv_int4value TYPE i.
     DATA lv_leng TYPE i.
     DATA lv_strlen TYPE i.
     DATA lt_conditions TYPE TABLE OF string.
@@ -2790,6 +2899,19 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                 ev_text = lv_value
                 ev_leng = lv_leng ).
         lv_lineoffset = lv_lineoffset + lv_leng.
+      ELSEIF wafield-datatype = 'INT4'.
+        " integer, ignore wafield-leng
+          IF lv_lineoffset + 2 <= strlen( iv_line ).
+            lv_value = iv_line+lv_lineoffset(2).
+          ELSE.
+            lv_leng = strlen( iv_line ) - lv_lineoffset.
+            IF lv_leng > 0.
+              lv_value = iv_line+lv_lineoffset(lv_leng).
+            ELSE.
+              lv_value = ''.
+            ENDIF.
+          ENDIF.
+          lv_lineoffset = lv_lineoffset + 2.
       ELSE.
         " other text like fields
         IF wafield-leng > 0.
@@ -2808,7 +2930,22 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       ENDIF.
       APPEND |    { lv_field } { lv_value }| TO cht_filecontent.
       IF wafield-fieldname NA '.&'.
-        APPEND |{ wafield-fieldname } = '{ lv_value }'| TO lt_conditions.
+        IF wafield-datatype = 'INT4'.
+            CALL FUNCTION 'CONVERT_STRING_TO_INTEGER'
+              EXPORTING
+                p_string = lv_value
+              IMPORTING
+                p_int = lv_int4value
+              EXCEPTIONS
+                OVERFLOW = 1
+                INVALID_CHARS = 2.
+            IF sy-subrc <> 0.
+                CLEAR lv_int4value.
+            ENDIF.
+            APPEND |{ wafield-fieldname } = { lv_int4value }| TO lt_conditions.
+        ELSE.
+            APPEND |{ wafield-fieldname } = '{ lv_value }'| TO lt_conditions.
+        ENDIF.
       ENDIF.
     ENDLOOP.
 
@@ -2836,23 +2973,23 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lv_entry TYPE string.
 
     IF iv_append = abap_false.
-        rv_success = me->get_config_lines_header(
-            EXPORTING
-                iv_tabname = iv_tabname
-                iv_request = iv_request
-                iv_mode    = iv_mode
-            IMPORTING
-                ev_desc = ls_data_table_desc
-            CHANGING
-                abaptext = abaptext
-             ).
-        CHECK rv_success = abap_true.
-        IF iv_deltastats = abap_false.
-          APPEND |Key: { iv_request-keys[ iv_tblkeyidx ]-tabkey }| TO abaptext.
-          APPEND '' TO abaptext.
-          APPEND 'Rows:' TO abaptext.
-          APPEND '' TO abaptext.
-        ENDIF.
+      rv_success = me->get_config_lines_header(
+          EXPORTING
+              iv_tabname = iv_tabname
+              iv_request = iv_request
+              iv_mode    = iv_mode
+          IMPORTING
+              ev_desc = ls_data_table_desc
+          CHANGING
+              abaptext = abaptext
+           ).
+      CHECK rv_success = abap_true.
+      IF iv_deltastats = abap_false.
+        APPEND |Key: { iv_request-keys[ iv_tblkeyidx ]-tabkey }| TO abaptext.
+        APPEND '' TO abaptext.
+        APPEND 'Rows:' TO abaptext.
+        APPEND '' TO abaptext.
+      ENDIF.
     ENDIF.
 
     " fetch config changes as table rows
@@ -2894,7 +3031,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     " if no rows are written, the rows are deleted in the TR
     IF ev_rows = 1.
-        APPEND '(Row(s) for the table key are deleted in the TR)' to abaptext.
+      APPEND '(Row(s) for the table key are deleted in the TR)' TO abaptext.
     ENDIF.
 
     rv_success = abap_true.
@@ -2962,7 +3099,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     APPEND |Changed in TR { iv_request-h-trkorr } at { iv_request-h-as4date } { iv_request-h-as4time }| TO abaptext.
 
     IF iv_tsv <> abap_true.
-        APPEND 'Fields:' TO abaptext.
+      APPEND 'Fields:' TO abaptext.
     ENDIF.
 
     rv_success = me->get_config_lines_header_embed(
@@ -2980,7 +3117,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
          ).
 
     IF iv_tsv <> abap_true.
-        APPEND '' TO abaptext.
+      APPEND '' TO abaptext.
     ENDIF.
 
     ev_desc-dd02v = ls_desc-dd02v.
@@ -3018,81 +3155,81 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       LOOP AT iv_desc-dd03v INTO wafield.
         IF wafield-leng = 0 AND wafield-datatype IS INITIAL.
 
-            CLEAR: lv_version_no, lt_objversions, ls_embedtable, ls_embedtableout.
-            lv_objname = wafield-rollname.
-            lv_objtype = 'TABL'.
-            IF lv_objname CP 'Z*' OR lv_objname CP 'Y*'.
-              lv_success = me->get_versions_no(
-                  EXPORTING
-                      iv_objname = lv_objname
-                      iv_objtype = 'TABL'
-                      iv_mode = iv_mode
-                      iv_trid = iv_request-h-trkorr
-                      iv_date = iv_request-h-as4date
-                      iv_time = iv_request-h-as4time
-                      iv_findtest = abap_false
-                  IMPORTING
-                      ev_version_no = lv_version_no
-                  CHANGING
-                      cht_objversions = lt_objversions
-                      ).
-            ELSE.
-              lv_success = me->get_versions_no(
-                  EXPORTING
-                      iv_objname = lv_objname
-                      iv_objtype = 'TABL'
-                      iv_mode = c_active_version
-                      iv_findtest = abap_false
-                  IMPORTING
-                      ev_version_no = lv_version_no
-                  CHANGING
-                      cht_objversions = lt_objversions
-                      ).
-            ENDIF.
-            CHECK lv_success = abap_true.
-            CHECK lv_version_no > 0.
-
-            lv_success = me->get_table_schema(
+          CLEAR: lv_version_no, lt_objversions, ls_embedtable, ls_embedtableout.
+          lv_objname = wafield-rollname.
+          lv_objtype = 'TABL'.
+          IF lv_objname CP 'Z*' OR lv_objname CP 'Y*'.
+            lv_success = me->get_versions_no(
                 EXPORTING
                     iv_objname = lv_objname
-                    iv_version = lt_objversions[ 1 ]-objversionno
-                    iv_escape = abap_false
+                    iv_objtype = 'TABL'
+                    iv_mode = iv_mode
+                    iv_trid = iv_request-h-trkorr
+                    iv_date = iv_request-h-as4date
+                    iv_time = iv_request-h-as4time
+                    iv_findtest = abap_false
                 IMPORTING
-                    ev_desc = ls_embedtable
-                     ).
-            CHECK lv_success = abap_true.
-
-            lv_tabname = lv_objname.
-            lv_keyflag = iv_keyflag.
-            IF wafield-keyflag = abap_true.
-                lv_keyflag = abap_true.
-            ENDIF.
-            lv_success = me->get_config_lines_header_embed(
-                EXPORTING
-                    iv_tabname = lv_tabname
-                    iv_request = iv_request
-                    iv_keyflag = lv_keyflag
-                    iv_tsv = iv_tsv
-                    iv_desc = ls_embedtable
-                IMPORTING
-                    ev_desc = ls_embedtableout
+                    ev_version_no = lv_version_no
                 CHANGING
-                    abaptext = abaptext
-                 ).
-            CHECK lv_success = abap_true.
+                    cht_objversions = lt_objversions
+                    ).
+          ELSE.
+            lv_success = me->get_versions_no(
+                EXPORTING
+                    iv_objname = lv_objname
+                    iv_objtype = 'TABL'
+                    iv_mode = c_active_version
+                    iv_findtest = abap_false
+                IMPORTING
+                    ev_version_no = lv_version_no
+                CHANGING
+                    cht_objversions = lt_objversions
+                    ).
+          ENDIF.
+          CHECK lv_success = abap_true.
+          CHECK lv_version_no > 0.
 
-            APPEND LINES OF ls_embedtableout-dd03v TO lt_dd03v.
+          lv_success = me->get_table_schema(
+              EXPORTING
+                  iv_objname = lv_objname
+                  iv_version = lt_objversions[ 1 ]-objversionno
+                  iv_escape = abap_false
+              IMPORTING
+                  ev_desc = ls_embedtable
+                   ).
+          CHECK lv_success = abap_true.
+
+          lv_tabname = lv_objname.
+          lv_keyflag = iv_keyflag.
+          IF wafield-keyflag = abap_true.
+            lv_keyflag = abap_true.
+          ENDIF.
+          lv_success = me->get_config_lines_header_embed(
+              EXPORTING
+                  iv_tabname = lv_tabname
+                  iv_request = iv_request
+                  iv_keyflag = lv_keyflag
+                  iv_tsv = iv_tsv
+                  iv_desc = ls_embedtable
+              IMPORTING
+                  ev_desc = ls_embedtableout
+              CHANGING
+                  abaptext = abaptext
+               ).
+          CHECK lv_success = abap_true.
+
+          APPEND LINES OF ls_embedtableout-dd03v TO lt_dd03v.
 
         ELSE.
-            IF iv_keyflag = abap_true.
-                wafield-keyflag = abap_true.
-            ENDIF.
-            lv_strlen = strlen( wafield-fieldname ).
-            lv_field = '                                :'.
-            lv_field+0(lv_strlen) = wafield-fieldname.
-            lv_field_desc = wafield-ddtext.
-            APPEND |    { lv_field } { wafield-keyflag } { lv_field_desc }| TO abaptext.
-            APPEND wafield TO lt_dd03v.
+          IF iv_keyflag = abap_true.
+            wafield-keyflag = abap_true.
+          ENDIF.
+          lv_strlen = strlen( wafield-fieldname ).
+          lv_field = '                                :'.
+          lv_field+0(lv_strlen) = wafield-fieldname.
+          lv_field_desc = wafield-ddtext.
+          APPEND |    { lv_field } { wafield-keyflag } { lv_field_desc }| TO abaptext.
+          APPEND wafield TO lt_dd03v.
         ENDIF.
       ENDLOOP.
     ENDIF.
@@ -3218,169 +3355,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     rv_success = abap_true.
 
-  ENDMETHOD.
-
-
-  METHOD get_msad_content.
-    FIELD-SYMBOLS <t100a_content> TYPE STANDARD TABLE.
-    FIELD-SYMBOLS <t100t_content> TYPE STANDARD TABLE.
-
-    DATA: lr_content    TYPE REF TO data,
-          ls_def        TYPE svrs_sobj_def,
-          ls_header     TYPE svrs_tlogo_header,
-          lt_content    TYPE svrs_tlogo_content_tab,
-          lt_header     TYPE STANDARD TABLE OF svrs_tlogo_header,
-          lt_mdlog      TYPE STANDARD TABLE OF smodilog,
-          lt_mdsrc      TYPE STANDARD TABLE OF smodisrc,
-          lv_objtype    TYPE versobjtyp VALUE 'MSAD',
-          lo_controller TYPE REF TO cl_svrs_tlogo_controller,
-          lo_exc        TYPE REF TO cx_svrs_error,
-          lv_str        TYPE string,
-          lt_t100t      TYPE STANDARD TABLE OF t100t,
-          lt_t100a      TYPE STANDARD TABLE OF t100a.
-
-    CALL FUNCTION 'SVRS_GET_VERSION_TLOG_40'
-      EXPORTING
-        destination           = iv_logdest
-        object_name           = iv_objname
-        versno                = iv_version
-        objtype               = lv_objtype
-      TABLES
-        vsmodisrc             = lt_mdsrc
-        content_tab           = lt_content
-        header_tab            = lt_header
-        mdlog_tab             = lt_mdlog
-      EXCEPTIONS
-        no_version            = 1
-        system_failure        = 2
-        communication_failure = 3
-        OTHERS                = 4.
-
-    IF sy-subrc <> 0.
-      me->write_telemetry( iv_message = |get_msad_content fails in fetching content lines for { iv_objname } version { iv_version }| ).
-      rv_success = abap_false.
-      RETURN.
-    ENDIF.
-
-    TRY.
-        lo_controller = cl_svrs_tlogo_controller=>get_instance( ).
-        ls_def = lo_controller->get_object_definition( iv_objtype = lv_objtype
-                                                       iv_versno = iv_version ).
-
-        lr_content = cl_svrs_tlogo_container=>create_data_object( ls_def ).
-        IF lt_content IS NOT INITIAL.
-          "   In case the object has been deleted, version is empty -> we only need to create
-          "   an empty container
-          cl_svrs_tlogo_container=>deserialize_from_xml(
-              EXPORTING
-                  it_content     = lt_content
-              CHANGING
-                  co_data_object = lr_content
-                   ).
-        ENDIF.
-    CATCH cx_svrs_error INTO lo_exc.
-        lv_str = lv_objtype.
-        me->write_telemetry( iv_message = |get_msad_content fails in fetching content lines for { iv_objname } version { iv_version }| ).
-        rv_success = abap_false.
-        RETURN.
-    ENDTRY.
-
-    ASSIGN lr_content->('T100A') TO <t100a_content>.
-    ASSIGN lr_content->('T100T') TO <t100t_content>.
-    lt_t100a = <t100a_content>.
-    lt_t100t = <t100t_content>.
-
-    ev_messobj-t100a_field = lt_t100a.
-    ev_messobj-t100t_field = lt_t100t.
-    rv_success = abap_true.
-  ENDMETHOD.
-
-  METHOD get_single_message_content.
-    FIELD-SYMBOLS <t100_content> TYPE STANDARD TABLE.
-    FIELD-SYMBOLS <t100u_content> TYPE STANDARD TABLE.
-
-    DATA: lr_content    TYPE REF TO data,
-          ls_def        TYPE svrs_sobj_def,
-          ls_header     TYPE svrs_tlogo_header,
-          lt_content    TYPE svrs_tlogo_content_tab,
-          lt_header     TYPE STANDARD TABLE OF svrs_tlogo_header,
-          lt_mdlog      TYPE STANDARD TABLE OF smodilog,
-          lt_mdsrc      TYPE STANDARD TABLE OF smodisrc,
-          lv_objtype    TYPE versobjtyp VALUE 'MESS',
-          lo_controller TYPE REF TO cl_svrs_tlogo_controller,
-          lo_exc        TYPE REF TO cx_svrs_error,
-          lv_str        TYPE string,
-          lt_t100u      TYPE STANDARD TABLE OF t100u,
-          lt_t100       TYPE STANDARD TABLE OF t100.
-
-    CALL FUNCTION 'SVRS_GET_VERSION_TLOG_40'
-      EXPORTING
-        destination           = iv_logdest
-        object_name           = iv_objname
-        versno                = iv_version
-        objtype               = lv_objtype
-      TABLES
-        vsmodisrc             = lt_mdsrc
-        content_tab           = lt_content
-        header_tab            = lt_header
-        mdlog_tab             = lt_mdlog
-      EXCEPTIONS
-        no_version            = 1
-        system_failure        = 2
-        communication_failure = 3
-        OTHERS                = 4.
-
-    IF sy-subrc <> 0.
-      me->write_telemetry( iv_message = |get_single_message_content fails in fetching content lines for { iv_objname } version { iv_version }| ).
-      rv_success = abap_false.
-      RETURN.
-    ENDIF.
-
-    TRY.
-        lo_controller = cl_svrs_tlogo_controller=>get_instance( ).
-        ls_def = lo_controller->get_object_definition( iv_objtype = lv_objtype
-                                                       iv_versno = iv_version ).
-
-        lr_content = cl_svrs_tlogo_container=>create_data_object( ls_def ).
-        IF lt_content IS NOT INITIAL.
-            "   In case the object has been deleted, version is empty -> we only need to create
-            "   an empty container
-            cl_svrs_tlogo_container=>deserialize_from_xml(
-                EXPORTING
-                    it_content     = lt_content
-                CHANGING
-                    co_data_object = lr_content
-                 ).
-        ENDIF.
-
-    CATCH cx_svrs_error INTO lo_exc.
-        lv_str = lv_objtype.
-        me->write_telemetry( iv_message = |get_single_message_content fails in fetching content lines for { iv_objname } version { iv_version }| ).
-        rv_success = abap_false.
-        RETURN.
-    ENDTRY.
-
-    ASSIGN lr_content->('T100') TO <t100_content>.
-    ASSIGN lr_content->('T100U') TO <t100u_content>.
-    lt_t100 = <t100_content>.
-    lt_t100u = <t100u_content>.
-
-*    READ TABLE lt_t100 INDEX 1 INTO DATA(ls_t100).
-*    READ TABLE lt_t100u INDEX 1 INTO DATA(ls_t100u).
-*    APPEND   |{ ls_t100-sprsl     WIDTH = 1  }{ cl_abap_char_utilities=>horizontal_tab } |
-*          && |{ ls_t100-arbgb     WIDTH = 20 }{ cl_abap_char_utilities=>horizontal_tab } |
-*          && |{ ls_t100-msgnr     WIDTH = 3  }{ cl_abap_char_utilities=>horizontal_tab } |
-*          && |{ ls_t100-text      WIDTH = 73 }{ cl_abap_char_utilities=>horizontal_tab } |
-*          && |{ ls_t100u-selfdef  WIDTH = 1  } | TO et_filecontent.
-*
-*    ev_filecontent = concat_lines_of( table = et_filecontent sep = cl_abap_char_utilities=>cr_lf ).
-*
-*    " align with GUI_DOWNLOAD which adds a blank line
-*    ev_filecontent = ev_filecontent && cl_abap_char_utilities=>cr_lf.
-
-    ev_messobj-t100_field = lt_t100.
-    ev_messobj-t100u_field = lt_t100u.
-    rv_success = abap_true.
   ENDMETHOD.
 
 
@@ -3805,6 +3779,33 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD get_formatted_json_string.
+
+    "cloud
+*    DATA(json_xstring) = cl_abap_conv_codepage=>create_out( )->convert( json_string_in ).
+    "on_premise
+    DATA(json_xstring) = cl_abap_codepage=>convert_to( json_string_in ).
+
+    "Check and pretty print JSON
+
+    DATA(reader) = cl_sxml_string_reader=>create( json_xstring ).
+    DATA(writer) = CAST if_sxml_writer(
+                          cl_sxml_string_writer=>create( type = if_sxml=>co_xt_json ) ).
+    writer->set_option( option = if_sxml_writer=>co_opt_linebreaks ).
+    writer->set_option( option = if_sxml_writer=>co_opt_indent ).
+    reader->next_node( ).
+    reader->skip_node( writer ).
+
+    "cloud
+*    DATA(json_formatted_string) = cl_abap_conv_codepage=>create_in( )->convert( CAST cl_sxml_string_writer( writer )->get_output( ) ).
+    "on premise
+    DATA(json_formatted_string) = cl_abap_codepage=>convert_from( CAST cl_sxml_string_writer( writer )->get_output( ) ).
+
+    json_string_out = escape( val = json_formatted_string format = cl_abap_format=>e_xml_text  ).
+
+  ENDMETHOD.
+
+
   METHOD get_fugr.
 
     DATA lv_pname_filter TYPE string.
@@ -3964,6 +3965,86 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD get_msad_content.
+    FIELD-SYMBOLS <t100a_content> TYPE STANDARD TABLE.
+    FIELD-SYMBOLS <t100t_content> TYPE STANDARD TABLE.
+
+    DATA: lr_content    TYPE REF TO data,
+          ls_def        TYPE svrs_sobj_def,
+          ls_header     TYPE svrs_tlogo_header,
+          lt_content    TYPE svrs_tlogo_content_tab,
+          lt_header     TYPE STANDARD TABLE OF svrs_tlogo_header,
+          lt_mdlog      TYPE STANDARD TABLE OF smodilog,
+          lt_mdsrc      TYPE STANDARD TABLE OF smodisrc,
+          lv_objtype    TYPE versobjtyp VALUE 'MSAD',
+          lo_controller TYPE REF TO cl_svrs_tlogo_controller,
+          lo_exc        TYPE REF TO cx_svrs_error,
+          lv_str        TYPE string,
+          lt_t100t      TYPE STANDARD TABLE OF t100t,
+          lt_t100a      TYPE STANDARD TABLE OF t100a.
+
+    CALL FUNCTION 'SVRS_GET_VERSION_TLOG_40'
+      EXPORTING
+        destination           = iv_logdest
+        object_name           = iv_objname
+        versno                = iv_version
+        objtype               = lv_objtype
+      TABLES
+        vsmodisrc             = lt_mdsrc
+        content_tab           = lt_content
+        header_tab            = lt_header
+        mdlog_tab             = lt_mdlog
+      EXCEPTIONS
+        no_version            = 1
+        system_failure        = 2
+        communication_failure = 3
+        OTHERS                = 4.
+
+    IF sy-subrc <> 0.
+      me->write_telemetry( iv_message = |get_msad_content fails in fetching content lines for { iv_objname } version { iv_version }| ).
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
+
+    TRY.
+        lo_controller = cl_svrs_tlogo_controller=>get_instance( ).
+        ls_def = lo_controller->get_object_definition( iv_objtype = lv_objtype
+                                                       iv_versno = iv_version ).
+
+        lr_content = cl_svrs_tlogo_container=>create_data_object( ls_def ).
+        IF lt_content IS NOT INITIAL.
+          "   In case the object has been deleted, version is empty -> we only need to create
+          "   an empty container
+          cl_svrs_tlogo_container=>deserialize_from_xml(
+              EXPORTING
+                  it_content     = lt_content
+              CHANGING
+                  co_data_object = lr_content
+                   ).
+        ENDIF.
+      CATCH cx_svrs_error INTO lo_exc.
+        lv_str = lv_objtype.
+        me->write_telemetry( iv_message = |get_msad_content fails in fetching content lines for { iv_objname } version { iv_version }| ).
+        rv_success = abap_false.
+        RETURN.
+    ENDTRY.
+
+    ASSIGN lr_content->('T100A') TO <t100a_content>.
+    ASSIGN lr_content->('T100T') TO <t100t_content>.
+    lt_t100a = <t100a_content>.
+    lt_t100t = <t100t_content>.
+
+    ev_messobj-t100a_field = lt_t100a.
+    ev_messobj-t100t_field = lt_t100t.
+    rv_success = abap_true.
+  ENDMETHOD.
+
+
+  METHOD get_msag_content.
+
+  ENDMETHOD.
+
+
   METHOD get_nonkey_column_values.
 
     DATA lt_entry_tab TYPE TABLE OF line.
@@ -4023,6 +4104,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           APPEND '' TO abaptext.
         ENDLOOP.
       CATCH cx_root.
+        me->write_telemetry( iv_message = |GET_CONFIG_TABLE_LINES fails to run query for non-key columns of { iv_data_table_desc-dd02v-tabname }| ).
     ENDTRY.
 
   ENDMETHOD.
@@ -4049,95 +4131,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       APPEND lv_childcl TO et_packages.
       lv_childcl = lv_parentcl.
     ENDWHILE.
-
-  ENDMETHOD.
-
-
-  METHOD get_remote_table_info.
-
-    DATA lv_data_access_restr_remote TYPE ntab_cmp-flag.
-    DATA lt_keylist TYPE TABLE OF e071k.
-    DATA lt_sellist_remote TYPE TABLE OF vimsellist.
-    DATA lt_sellist_remote_3 TYPE TABLE OF vimsellisc.
-    DATA ls_sellist_remote_3 TYPE vimsellisc.
-    DATA lt_namtab_remote TYPE TABLE OF ntab_cmp.
-    DATA lt_namtab_view_remote TYPE TABLE OF vimnamtab.
-    DATA lt_header_remote TYPE TABLE OF ntab_hdr.
-    DATA lt_header_view_remote TYPE TABLE OF vimdesc.
-    DATA lt_header_view_remote_3 TYPE TABLE OF vimdescc.
-    DATA ls_header_view_remote_3 TYPE vimdescc.
-    DATA lv_language_local TYPE sy-langu.
-    DATA lv_codepage_local TYPE tcp00-cpcodepage.
-    DATA lv_endian_local TYPE tcp00-cpcodepage.
-    DATA lv_language_remote TYPE sy-langu.
-    DATA lv_codepage_remote TYPE tcp00-cpcodepage.
-    DATA lv_endian_remote TYPE tcp00-cpcodepage.
-    DATA lv_cmp_flag TYPE ntab_cmp-cmp_flag.
-
-    LOOP AT it_rfcconnection INTO DATA(warfcdest).
-
-        CALL FUNCTION 'SCT1_GET_NAMETAB_RFC_40_30'
-            EXPORTING
-              iv_rfc_destination    = warfcdest-rfcdest
-              iv_view_name          = iv_tabname
-              iv_get_output_attr    = 'X'
-              iv_view_table_flag    = 'V'
-              iv_language           = 'E'
-              iv_select_by_sellist  = 'X'
-            TABLES
-              et_namtab             = lt_namtab_remote
-              et_header             = lt_header_remote
-              et_namtab_view        = lt_namtab_view_remote
-              et_header_view        = lt_header_view_remote
-              et_sellist            = lt_sellist_remote
-            EXCEPTIONS
-              not_found             = 1
-              no_fields             = 2
-              not_active            = 3
-              no_tvdir_entry        = 4
-              communication_failure = 5
-              system_failure        = 6
-              OTHERS                = 7.
-        CHECK sy-subrc = 0.
-
-        CALL FUNCTION 'SCT2_GET_T000_ENTRY_RFC'
-            IMPORTING
-                ev_language = lv_language_local
-                ev_codepage = lv_codepage_local
-                ev_endian_check_number = lv_endian_local.
-
-        CALL FUNCTION 'SCP_GET_CODEPAGE_NUMBER'
-            EXPORTING
-                database_also = ' '
-            IMPORTING
-                appl_codepage = lv_codepage_local.
-
-        CALL FUNCTION 'SCT2_GET_T000_ENTRY_RFC'
-            DESTINATION
-                'MS2_CLIENT_COMPARE'
-            IMPORTING
-                ev_language = lv_language_remote
-                ev_codepage = lv_codepage_remote
-                ev_endian_check_number = lv_endian_remote
-            EXCEPTIONS
-              communication_failure  = 1
-              system_failure         = 2
-              OTHERS                 = 3.
-
-        CALL FUNCTION 'SCT2_COMPARE_NAMETABS'
-             EXPORTING
-                  iv_cmp_subset         = 'X'
-             IMPORTING
-                  ev_cmp_flag           = lv_cmp_flag
-             TABLES
-                  it_namtab_local       = lt_namtab_remote
-                  it_header_local       = lt_header_remote
-                  it_namtab_remote      = lt_namtab_remote
-                  it_header_remote      = lt_header_remote
-             EXCEPTIONS
-                  OTHERS                = 0.
-
-    ENDLOOP.
 
   ENDMETHOD.
 
@@ -4315,6 +4308,95 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD get_single_message_content.
+    FIELD-SYMBOLS <t100_content> TYPE STANDARD TABLE.
+    FIELD-SYMBOLS <t100u_content> TYPE STANDARD TABLE.
+
+    DATA: lr_content    TYPE REF TO data,
+          ls_def        TYPE svrs_sobj_def,
+          ls_header     TYPE svrs_tlogo_header,
+          lt_content    TYPE svrs_tlogo_content_tab,
+          lt_header     TYPE STANDARD TABLE OF svrs_tlogo_header,
+          lt_mdlog      TYPE STANDARD TABLE OF smodilog,
+          lt_mdsrc      TYPE STANDARD TABLE OF smodisrc,
+          lv_objtype    TYPE versobjtyp VALUE 'MESS',
+          lo_controller TYPE REF TO cl_svrs_tlogo_controller,
+          lo_exc        TYPE REF TO cx_svrs_error,
+          lv_str        TYPE string,
+          lt_t100u      TYPE STANDARD TABLE OF t100u,
+          lt_t100       TYPE STANDARD TABLE OF t100.
+
+    CALL FUNCTION 'SVRS_GET_VERSION_TLOG_40'
+      EXPORTING
+        destination           = iv_logdest
+        object_name           = iv_objname
+        versno                = iv_version
+        objtype               = lv_objtype
+      TABLES
+        vsmodisrc             = lt_mdsrc
+        content_tab           = lt_content
+        header_tab            = lt_header
+        mdlog_tab             = lt_mdlog
+      EXCEPTIONS
+        no_version            = 1
+        system_failure        = 2
+        communication_failure = 3
+        OTHERS                = 4.
+
+    IF sy-subrc <> 0.
+      me->write_telemetry( iv_message = |get_single_message_content fails in fetching content lines for { iv_objname } version { iv_version }| ).
+      rv_success = abap_false.
+      RETURN.
+    ENDIF.
+
+    TRY.
+        lo_controller = cl_svrs_tlogo_controller=>get_instance( ).
+        ls_def = lo_controller->get_object_definition( iv_objtype = lv_objtype
+                                                       iv_versno = iv_version ).
+
+        lr_content = cl_svrs_tlogo_container=>create_data_object( ls_def ).
+        IF lt_content IS NOT INITIAL.
+          "   In case the object has been deleted, version is empty -> we only need to create
+          "   an empty container
+          cl_svrs_tlogo_container=>deserialize_from_xml(
+              EXPORTING
+                  it_content     = lt_content
+              CHANGING
+                  co_data_object = lr_content
+               ).
+        ENDIF.
+
+      CATCH cx_svrs_error INTO lo_exc.
+        lv_str = lv_objtype.
+        me->write_telemetry( iv_message = |get_single_message_content fails in fetching content lines for { iv_objname } version { iv_version }| ).
+        rv_success = abap_false.
+        RETURN.
+    ENDTRY.
+
+    ASSIGN lr_content->('T100') TO <t100_content>.
+    ASSIGN lr_content->('T100U') TO <t100u_content>.
+    lt_t100 = <t100_content>.
+    lt_t100u = <t100u_content>.
+
+*    READ TABLE lt_t100 INDEX 1 INTO DATA(ls_t100).
+*    READ TABLE lt_t100u INDEX 1 INTO DATA(ls_t100u).
+*    APPEND   |{ ls_t100-sprsl     WIDTH = 1  }{ cl_abap_char_utilities=>horizontal_tab } |
+*          && |{ ls_t100-arbgb     WIDTH = 20 }{ cl_abap_char_utilities=>horizontal_tab } |
+*          && |{ ls_t100-msgnr     WIDTH = 3  }{ cl_abap_char_utilities=>horizontal_tab } |
+*          && |{ ls_t100-text      WIDTH = 73 }{ cl_abap_char_utilities=>horizontal_tab } |
+*          && |{ ls_t100u-selfdef  WIDTH = 1  } | TO et_filecontent.
+*
+*    ev_filecontent = concat_lines_of( table = et_filecontent sep = cl_abap_char_utilities=>cr_lf ).
+*
+*    " align with GUI_DOWNLOAD which adds a blank line
+*    ev_filecontent = ev_filecontent && cl_abap_char_utilities=>cr_lf.
+
+    ev_messobj-t100_field = lt_t100.
+    ev_messobj-t100u_field = lt_t100u.
+    rv_success = abap_true.
+  ENDMETHOD.
+
+
   METHOD get_subpackages.
 
     " breath first search for sub packages of each package
@@ -4338,21 +4420,21 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA(lv_tabkey) = iv_tabkey.
     " trim to max length
     IF strlen( lv_tabkey ) > 120.
-        lv_tabkey = lv_tabkey+0(120).
+      lv_tabkey = lv_tabkey+0(120).
     ENDIF.
     TRANSLATE lv_tabkey USING ' _'.
-    lv_tabkey = replace( val = lv_tabkey sub = '%' with = '%25' ).
-    lv_tabkey = replace( val = lv_tabkey sub = '/' with = '%2F' ).
-    lv_tabkey = replace( val = lv_tabkey sub = '\' with = '%5C' ).
-    lv_tabkey = replace( val = lv_tabkey sub = ':' with = '%3A' ).
-    lv_tabkey = replace( val = lv_tabkey sub = '*' with = '%2A' ).
-    lv_tabkey = replace( val = lv_tabkey sub = '?' with = '%3F' ).
-    lv_tabkey = replace( val = lv_tabkey sub = '"' with = '%22' ).
-    lv_tabkey = replace( val = lv_tabkey sub = '<' with = '%3C' ).
-    lv_tabkey = replace( val = lv_tabkey sub = '>' with = '%3E' ).
-    lv_tabkey = replace( val = lv_tabkey sub = '|' with = '%7C' ).
+    REPLACE ALL OCCURRENCES OF '%' IN lv_tabkey WITH '%25'.
+    REPLACE ALL OCCURRENCES OF '/' IN lv_tabkey WITH '%2F'.
+    REPLACE ALL OCCURRENCES OF '\' IN lv_tabkey WITH '%5C'.
+    REPLACE ALL OCCURRENCES OF ':' IN lv_tabkey WITH '%3A'.
+    REPLACE ALL OCCURRENCES OF '*' IN lv_tabkey WITH '%2A'.
+    REPLACE ALL OCCURRENCES OF '?' IN lv_tabkey WITH '%3F'.
+    REPLACE ALL OCCURRENCES OF '"' IN lv_tabkey WITH '%22'.
+    REPLACE ALL OCCURRENCES OF '<' IN lv_tabkey WITH '%3C'.
+    REPLACE ALL OCCURRENCES OF '>' IN lv_tabkey WITH '%3E'.
+    REPLACE ALL OCCURRENCES OF '|' IN lv_tabkey WITH '%7C'.
     IF strlen( lv_tabkey ) > 120.
-        lv_tabkey = lv_tabkey+0(120).
+      lv_tabkey = lv_tabkey+0(120).
     ENDIF.
     ev_tabkey = lv_tabkey.
   ENDMETHOD.
@@ -4590,6 +4672,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lt_objects TYPE trwbo_t_e071.
     FIELD-SYMBOLS <fs_cs_request_object> LIKE LINE OF ld_cs_request-objects.
     FIELD-SYMBOLS <fs_cs_request_key> LIKE LINE OF ld_cs_request-keys.
+    DATA lt_cs_request TYPE standard table of trwbo_request.
     DATA lt_objversions TYPE tty_version_no.
     DATA wa_objversion TYPE ts_version_no.
     DATA lt_filecontent TYPE tty_abaptext.
@@ -4630,6 +4713,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lt_fugrs TYPE tty_fugr_devclass.
     DATA lt_progs TYPE tty_prog_devclass.
     DATA lt_scnnums TYPE STANDARD TABLE OF d020s-dnum.
+    DATA lt_brfapp_processed TYPE TABLE OF string.
     DATA lv_cdate TYPE cdate.
     DATA lv_udate TYPE aedat.
     DATA lv_progcls TYPE t52ba-pwert.
@@ -4675,9 +4759,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     ev_time = ld_cs_request-h-as4time.
 
     IF ld_cs_request-h-trfunction = c_custtrfunc.
-        ev_custtr = abap_true.
+      ev_custtr = abap_true.
     ELSE.
-        ev_custtr = abap_false.
+      ev_custtr = abap_false.
     ENDIF.
 
     " only support workbench/customizing/transport of copies TR
@@ -4706,6 +4790,17 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     " need to enumerate tasks and then extract objects from each task
     IF iv_mode = c_active_version.
 
+      APPEND LINES OF ld_cs_request-objects TO lt_objects.
+
+      " BRF plus case
+*      LOOP AT ld_cs_request-objects ASSIGNING <fs_cs_request_object>.
+*        IF NOT line_exists( lt_objects[ obj_name = <fs_cs_request_object>-obj_name ] ) OR <fs_cs_request_object>-obj_name+0(3) EQ 'FDT'.
+*          IF <fs_cs_request_object>-obj_name+0(3) = 'FDT'.
+*            APPEND ld_cs_request TO lt_cs_request.
+*          ENDIF.
+*        ENDIF.
+*      ENDLOOP.
+
       " fetch tasks in a modifiable TR
       SELECT trkorr FROM e070 INTO TABLE @lt_tasks WHERE strkorr = @lv_trkorr.
 
@@ -4733,11 +4828,15 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         ENDIF.
         " object may duplicate among tasks
         LOOP AT ld_cs_request-objects ASSIGNING <fs_cs_request_object>.
-          IF NOT line_exists( lt_objects[ obj_name = <fs_cs_request_object>-obj_name ] ).
+          IF NOT line_exists( lt_objects[ obj_name = <fs_cs_request_object>-obj_name ] ) OR <fs_cs_request_object>-obj_name+0(3) EQ 'FDT'.
             APPEND <fs_cs_request_object> TO lt_objects.
+            " BRF plus case for BRF, obj_name is same, all as "FDT0000"
+            IF <fs_cs_request_object>-obj_name+0(3) = 'FDT'.
+              APPEND ld_cs_request TO lt_cs_request.
+            ENDIF.
           ENDIF.
         ENDLOOP.
-      ENDLOOP.
+    ENDLOOP.
 
     ELSE.
 
@@ -4746,6 +4845,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
       APPEND LINES OF ld_cs_request-objects TO lt_objects.
 
+      " BRF plus case: for BRF, obj_name is same, all as "FDT0000"
+      LOOP AT ld_cs_request-objects ASSIGNING <fs_cs_request_object>.
+          IF <fs_cs_request_object>-obj_name+0(3) = 'FDT'.
+            APPEND ld_cs_request TO lt_cs_request.
+          ENDIF.
+      ENDLOOP.
     ENDIF.
 
     " append all tasks' description to the commit description
@@ -4766,6 +4871,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     SPLIT iv_packagenames AT ',' INTO TABLE lt_packagenames.
 
+    APPEND 'This is auto generated and not part of engineer changes' TO lt_trobjcontent.
+
     " process objects in the TR
     LOOP AT lt_objects ASSIGNING <fs_cs_request_object> WHERE pgmid <> 'CORR'.
 
@@ -4783,22 +4890,39 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           OR lv_objtype = 'CDAT'
           OR lv_objtype = 'VDAT'
           OR lv_objtype = 'TDAT'.
-          " whether need content or not, table changes should be presented for update detection
-          me->build_table_config_change(
-              EXPORTING
-                  iv_cs_request = ld_cs_request
-                  iv_objname = <fs_cs_request_object>-obj_name
-                  iv_objtype = <fs_cs_request_object>-object
-                  iv_mode = iv_mode
-                  iv_deltastats = iv_deltastats
-                  iv_maxrow = iv_maxrow
-                  iv_maxfulltable = iv_maxfulltable
-                  it_rfcconnection = it_rfcconnection
-                  it_excl_tbls = it_excl_tbls
-              CHANGING
-                  it_commit_objects = it_commit_objects
-                   ).
-          CONTINUE.
+
+        " FDT table stores BRFplus related data, need to build output differently than normal table changes
+        IF <fs_cs_request_object>-obj_name+0(3) = 'FDT'.
+            IF line_exists( lt_cs_request[ h-trkorr = <fs_cs_request_object>-trkorr ] ).
+                me->build_brf_xml(
+                    EXPORTING
+                      iv_cs_request = lt_cs_request[ h-trkorr = <fs_cs_request_object>-trkorr ]
+                      iv_objname = <fs_cs_request_object>-obj_name
+                      iv_objtype = <fs_cs_request_object>-object
+                    CHANGING
+                      it_commit_objects = it_commit_objects
+                      it_brfapp_processed = lt_brfapp_processed
+                     ).
+            ENDIF.
+        ENDIF.
+
+        " whether need content or not, table changes should be presented for update detection
+        me->build_table_config_change(
+            EXPORTING
+                iv_cs_request = ld_cs_request
+                iv_objname = <fs_cs_request_object>-obj_name
+                iv_objtype = <fs_cs_request_object>-object
+                iv_mode = iv_mode
+                iv_deltastats = iv_deltastats
+                iv_maxrow = iv_maxrow
+                iv_maxfulltable = iv_maxfulltable
+                it_rfcconnection = it_rfcconnection
+                it_excl_tbls = it_excl_tbls
+            CHANGING
+                it_commit_objects = it_commit_objects
+                 ).
+        CONTINUE.
+
       ENDIF.
 
       " schema/PCR object
@@ -4809,21 +4933,26 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         IF iv_needcontent = abap_true.
 
           lv_objname2 = lv_objname.
-          me->build_schema_content_active(
-              EXPORTING
-                  iv_schemaname = lv_objname2
-              IMPORTING
-                  et_filecontent = lt_filecontent
-                   ).
-
           IF lv_objtype = 'PSCC'.
-            SELECT SINGLE cdate FROM t52cc INTO @lv_cdate WHERE sname = @lv_objname.
-            SELECT SINGLE udate FROM t52cc INTO @lv_udate WHERE sname = @lv_objname.
-            SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'SCHE' AND ponam = @lv_objname AND pattr = 'PCL'. "#EC WARNOK
+              me->build_schema_content_active(
+                  EXPORTING
+                      iv_schemaname = lv_objname2
+                  IMPORTING
+                      et_filecontent = lt_filecontent
+                       ).
+              SELECT SINGLE cdate FROM t52cc INTO @lv_cdate WHERE sname = @lv_objname.
+              SELECT SINGLE udate FROM t52cc INTO @lv_udate WHERE sname = @lv_objname.
+              SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'SCHE' AND ponam = @lv_objname AND pattr = 'PCL'. "#EC WARNOK
           ELSE.
-            SELECT SINGLE cdate FROM t52ce INTO @lv_cdate WHERE cname = @lv_objname.
-            SELECT SINGLE udate FROM t52ce INTO @lv_udate WHERE cname = @lv_objname.
-            SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'CYCL' AND ponam = @lv_objname AND pattr = 'PCL'. "#EC WARNOK
+              me->build_pcr_content_active(
+                  EXPORTING
+                      iv_pcrname = lv_objname2
+                  IMPORTING
+                      et_filecontent = lt_filecontent
+                       ).
+              SELECT SINGLE cdate FROM t52ce INTO @lv_cdate WHERE cname = @lv_objname.
+              SELECT SINGLE udate FROM t52ce INTO @lv_udate WHERE cname = @lv_objname.
+              SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'CYCL' AND ponam = @lv_objname AND pattr = 'PCL'. "#EC WARNOK
           ENDIF.
 
           " schema/PCR has no reliable version upon releasing TR, have to use dates to determine add or update
@@ -4860,6 +4989,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       ENDIF.
 
       IF lv_objtype = 'VARX' OR lv_objtype = 'VARI'.
+
         " handle VARX report variant case
         me->build_report_variant_change(
             EXPORTING
@@ -4994,17 +5124,17 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
       ELSEIF lv_objtype = 'PROG'.
 
-          " program (include) case
-          " find out which package the ABAP object belongs to
+        " program (include) case
+        " find out which package the ABAP object belongs to
 
-          " use cache for function group objects
-          IF line_exists( lt_progs[ prog = lv_objname ] ).
-            lv_devclass = lt_progs[ prog = lv_objname ]-devclass.
-          ELSE.
-              SELECT SINGLE devclass INTO lv_devclass FROM tadir
-                  WHERE object = lv_objtype AND obj_name = lv_objname. "#EC WARNOK "#EC CI_SGLSELECT
-              APPEND VALUE ts_prog_devclass( prog = lv_objname devclass = lv_devclass ) TO lt_progs.
-          ENDIF.
+        " use cache for function group objects
+        IF line_exists( lt_progs[ prog = lv_objname ] ).
+          lv_devclass = lt_progs[ prog = lv_objname ]-devclass.
+        ELSE.
+          SELECT SINGLE devclass INTO lv_devclass FROM tadir
+              WHERE object = lv_objtype AND obj_name = lv_objname. "#EC WARNOK "#EC CI_SGLSELECT
+          APPEND VALUE ts_prog_devclass( prog = lv_objname devclass = lv_devclass ) TO lt_progs.
+        ENDIF.
 
       ELSEIF lv_objtype = 'INTF' OR lv_objtype = 'ENHO'.
         " interface, enhancement implementation case
@@ -5061,7 +5191,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         SPLIT lv_objname AT '=' INTO TABLE lt_objname_parts.
         lv_classname = lt_objname_parts[ 1 ].
         IF strlen( lv_classname ) > 30.
-            lv_classname = lv_objname+0(30).
+          lv_classname = lv_objname+0(30).
         ENDIF.
         CLEAR ls_tadir.
         SELECT SINGLE * INTO ls_tadir FROM tadir
@@ -5100,7 +5230,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
               ev_filecontent = lv_filecontent
               ).
         CHECK lv_success = abap_true.
-        IF line_exists( it_commit_objects[ devclass = lv_devclass objname = lv_mess_objname objtype = 'MESS' objtype2 = 'MESS' ] ).
+        IF line_exists( it_commit_objects[ devclass = lv_devclass objname = lv_objname objtype = lv_objtype objtype2 = lv_objtype ] ).
           CONTINUE.
         ENDIF.
 
@@ -5149,6 +5279,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             CHANGING
                 cht_objversions = lt_objversions
                 ).
+          CHECK lv_success = abap_true.
 
           lv_success = me->build_single_message_content(
             EXPORTING
@@ -5159,6 +5290,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                 ).
           CHECK lv_success = abap_true.
           IF line_exists( it_commit_objects[ devclass = lv_devclass objname = lv_mess_objname objtype = 'MESS' objtype2 = 'MESS' ] ).
+            CONTINUE.
+          ENDIF.
+          IF line_exists( it_commit_objects[ devclass = lv_devclass objname = lv_objname objtype = lv_objtype objtype2 = lv_objtype ] ).
             CONTINUE.
           ENDIF.
 
@@ -5206,23 +5340,23 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         CONTINUE.
 
       ELSE.
-          " whether need content or not, table changes should be presented for update detection
-          " all other config change objects
-          me->build_logical_config_change(
-              EXPORTING
-                  iv_cs_request = ld_cs_request
-                  iv_object = <fs_cs_request_object>
-                  iv_objname = lv_objname
-                  iv_objtype = lv_objtype
-                  iv_mode = iv_mode
-                  iv_deltastats = iv_deltastats
-                  iv_maxrow = iv_maxrow
-                  iv_maxfulltable = iv_maxfulltable
-                  it_excl_tbls = it_excl_tbls
-              CHANGING
-                  it_commit_objects = it_commit_objects
-                   ).
-          CONTINUE.
+        " whether need content or not, table changes should be presented for update detection
+        " all other config change objects
+        me->build_logical_config_change(
+            EXPORTING
+                iv_cs_request = ld_cs_request
+                iv_object = <fs_cs_request_object>
+                iv_objname = lv_objname
+                iv_objtype = lv_objtype
+                iv_mode = iv_mode
+                iv_deltastats = iv_deltastats
+                iv_maxrow = iv_maxrow
+                iv_maxfulltable = iv_maxfulltable
+                it_excl_tbls = it_excl_tbls
+            CHANGING
+                it_commit_objects = it_commit_objects
+                 ).
+        CONTINUE.
       ENDIF.
 
       " ABAP source code or table schema cases
@@ -5548,6 +5682,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     LOOP AT lt_fugrs INTO DATA(wafugr).
 
       lv_fugr = wafugr-fugr.
+
+      " is some of function group object changed only?
+      IF line_exists( it_commit_objects[ fugr = lv_fugr ] ).
+        CONTINUE.
+      ENDIF.
+
       lv_devclass = wafugr-devclass.
 
       " is the object in (sub package of) one of the packages specified?
@@ -5630,7 +5770,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       DATA(pname_filter) = |SAPL{ lv_fugr }|.
       CLEAR: lt_fgfmcodes, lt_fginccodes.
       SELECT funcname INTO TABLE @lt_fgfmcodes FROM tfdir WHERE pname = @pname_filter.
-      pname_filter = |L{ lv_fugr }%|.
+      " a function group name may be the prefix of another
+      pname_filter = |L{ lv_fugr }___|.
       SELECT name INTO TABLE @lt_fginccodes FROM trdir WHERE name LIKE @pname_filter.
 
       LOOP AT lt_fgfmcodes INTO DATA(wafgfm).
@@ -5782,6 +5923,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       lv_objname = waprog-prog.
       lv_objtype = 'REPT'.
       lv_objtype2 = 'PROG'.
+      lv_devclass = waprog-devclass.
+
       lv_success = me->get_versions_no(
           EXPORTING
               iv_objname = lv_objname
@@ -5802,33 +5945,33 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       CHECK lines( lt_objversions ) > 0.
 
       IF iv_deltastats = abap_false.
-          CLEAR: lv_filecontent, lt_filecontent.
-          me->get_rept_content(
-              EXPORTING
-                  iv_version = lt_objversions[ 1 ]-objversionno
-                  iv_objname = lt_objversions[ 1 ]-objname
-              IMPORTING
-                  ev_filecontent = lv_filecontent
-                  et_filecontent = lt_filecontent
-                   ).
+        CLEAR: lv_filecontent, lt_filecontent.
+        me->get_rept_content(
+            EXPORTING
+                iv_version = lt_objversions[ 1 ]-objversionno
+                iv_objname = lt_objversions[ 1 ]-objname
+            IMPORTING
+                ev_filecontent = lv_filecontent
+                et_filecontent = lt_filecontent
+                 ).
 
-          TRANSLATE lv_objname TO UPPER CASE.
+        TRANSLATE lv_objname TO UPPER CASE.
 
-          IF line_exists( it_commit_objects[ devclass = lv_devclass objname = lv_objname objtype = lv_objtype ] ).
-              CONTINUE.
-          ENDIF.
+        IF line_exists( it_commit_objects[ devclass = lv_devclass objname = lv_objname objtype = lv_objtype ] ).
+          CONTINUE.
+        ENDIF.
 
-          APPEND VALUE ts_commit_object(
-              devclass = lv_devclass
-              objname = lv_objname
-              objtype = 'REPT'
-              objtype2 = lv_objtype2
-              delflag = abap_false
-              verno = lv_version_no
-              filecontent = lv_filecontent
-              date = lv_verdate
-              time = lv_vertime
-              ) TO it_commit_objects.
+        APPEND VALUE ts_commit_object(
+            devclass = lv_devclass
+            objname = lv_objname
+            objtype = 'REPT'
+            objtype2 = lv_objtype2
+            delflag = abap_false
+            verno = lv_version_no
+            filecontent = lv_filecontent
+            date = lv_verdate
+            time = lv_vertime
+            ) TO it_commit_objects.
       ENDIF.
 
       " screens of the program
@@ -5873,7 +6016,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         TRANSLATE lv_objname TO UPPER CASE.
 
         IF line_exists( it_commit_objects[ devclass = lv_devclass objname = lv_objname objtype = lv_objtype ] ).
-            CONTINUE.
+          CONTINUE.
         ENDIF.
 
         APPEND VALUE ts_commit_object(
@@ -6020,6 +6163,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       ls_task-title = |{ lv_tasktitle } { lv_taskdesc }|.
       IF line_exists( lt_tasks[ id = lv_taskid ] ).
         ls_task-status = lt_tasks[ id = lv_taskid ]-status.
+      ELSE.
+        ls_task-status = 'N'.
       ENDIF.
       APPEND ls_task TO ev_info-tasks.
     ENDLOOP.
@@ -6064,6 +6209,16 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       RETURN.
     ENDIF.
     ev_owner = ld_cs_request-h-as4user.
+  ENDMETHOD.
+
+
+  METHOD get_class_info.
+
+    LOOP AT it_objversions INTO DATA(waver).
+        CHECK waver-objtype = 'METH'.
+        APPEND VALUE ty_class( name = iv_name meth = waver-objname+30 ) TO et_classes.
+    ENDLOOP.
+
   ENDMETHOD.
 
 
@@ -6131,6 +6286,11 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
 
   METHOD get_varx_content.
+    CONSTANTS:
+      gc_prog     TYPE i VALUE 40,
+      gc_vari     TYPE i VALUE 14,
+      gc_prog_old TYPE i VALUE 8.
+
     DATA: lv_objnamestring TYPE string.
     DATA: lv_itab         TYPE TABLE OF string.
     DATA: lv_report_str   TYPE string.
@@ -6138,12 +6298,20 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA: lv_report       TYPE  vari_reprt.
     DATA: lv_variant      TYPE  variant.
     DATA: lt_valuetab     TYPE TABLE OF rsparams.
+    DATA: lv_objlen  TYPE i.
+
 
     lv_objnamestring = iv_objname.
-    SPLIT lv_objnamestring AT space INTO lv_report_str lv_variant_str.
+    lv_objlen = STRLEN( lv_objnamestring ).
 
-    CONDENSE lv_report_str.
-    CONDENSE lv_variant_str.
+    IF lv_objlen > gc_prog.
+      SPLIT lv_objnamestring AT space INTO lv_report_str lv_variant_str.
+        CONDENSE lv_report_str.
+        CONDENSE lv_variant_str.
+    ELSE.
+      lv_report_str   = iv_objname(gc_prog_old).
+      lv_variant_str   = iv_objname+gc_prog_old(gc_vari).
+    ENDIF.
 
     lv_report = lv_report_str.
     lv_variant = lv_variant_str.
@@ -6162,7 +6330,8 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             variant_obsolete     = 2
             OTHERS               = 3.
         IF sy-subrc <> 0.
-          " Implement suitable error handling here
+          rv_success = abap_false.
+          RETURN.
         ENDIF.
 
 *        APPEND |selname kind sign option low high| TO et_filecontent.
@@ -6178,13 +6347,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         ENDLOOP.
 *        et_filecontent = lt_valuetab.
         rv_success = abap_true.
-      CATCH cx_root.
+    CATCH cx_root.
+        rv_success = abap_false.
     ENDTRY.
-  ENDMETHOD.
-
-
-  METHOD get_msag_content.
-
   ENDMETHOD.
 
 
@@ -6575,33 +6740,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     ev_filecontent = ev_filecontent && cl_abap_char_utilities=>cr_lf.
 
     rv_success = abap_true.
-
-  ENDMETHOD.
-
-
-  METHOD get_formatted_json_string.
-
-    "cloud
-*    DATA(json_xstring) = cl_abap_conv_codepage=>create_out( )->convert( json_string_in ).
-    "on_premise
-    DATA(json_xstring) = cl_abap_codepage=>convert_to( json_string_in ).
-
-    "Check and pretty print JSON
-
-    DATA(reader) = cl_sxml_string_reader=>create( json_xstring ).
-    DATA(writer) = CAST if_sxml_writer(
-                          cl_sxml_string_writer=>create( type = if_sxml=>co_xt_json ) ).
-    writer->set_option( option = if_sxml_writer=>co_opt_linebreaks ).
-    writer->set_option( option = if_sxml_writer=>co_opt_indent ).
-    reader->next_node( ).
-    reader->skip_node( writer ).
-
-    "cloud
-*    DATA(json_formatted_string) = cl_abap_conv_codepage=>create_in( )->convert( CAST cl_sxml_string_writer( writer )->get_output( ) ).
-    "on premise
-    DATA(json_formatted_string) = cl_abap_codepage=>convert_from( CAST cl_sxml_string_writer( writer )->get_output( ) ).
-
-    json_string_out = escape( val = json_formatted_string format = cl_abap_format=>e_xml_text  ).
 
   ENDMETHOD.
 

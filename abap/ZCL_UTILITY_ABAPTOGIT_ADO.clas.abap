@@ -90,11 +90,13 @@ CLASS zcl_utility_abaptogit_ado DEFINITION
     " get IDs of TRs between a date range
     " iv_fromdat - date to include from
     " iv_todat - date to include to
+    " iv_mode - latest/active
     " et_trids - list of TR IDs retrieved
     CLASS-METHODS get_trs_daterange
       IMPORTING
         iv_fromdat TYPE d
         iv_todat   TYPE d
+        iv_mode    TYPE string DEFAULT 'latest'
       EXPORTING
         et_trids   TYPE tty_trids.
 
@@ -447,42 +449,74 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
     DATA lv_folder TYPE rlgrap-filename.
     DATA lv_type TYPE string.
+    DATA lv_objname TYPE string.
+    DATA lv_devclass TYPE string.
+    DATA lv_fugr TYPE string.
+    DATA lv_progcls TYPE string.
+
+    " remove leading / confusing Git path
+    lv_objname = iv_commit_object-objname.
+    IF strlen( lv_objname ) > 0 AND lv_objname+0(1) = c_delimgit.
+        lv_objname = lv_objname+1.
+    ENDIF.
+    lv_devclass = iv_commit_object-devclass.
+    IF strlen( lv_devclass ) > 0 AND lv_devclass+0(1) = c_delimgit.
+        lv_devclass = lv_devclass+1.
+    ENDIF.
+    lv_fugr = iv_commit_object-fugr.
+    IF strlen( lv_fugr ) > 0 AND lv_fugr+0(1) = c_delimgit.
+        lv_fugr = lv_fugr+1.
+    ENDIF.
+    lv_progcls = iv_commit_object-progcls.
+    IF strlen( lv_progcls ) > 0 AND lv_progcls+0(1) = c_delimgit.
+        lv_progcls = lv_progcls+1.
+    ENDIF.
 
     IF iv_commit_object-objtype = 'TROBJ'.
 
       " TR object list log named as <name>.trobj.abap
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.trobj.txt|.
+        rv_name = |{ lv_objname }.trobj.txt|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
-          ev_file_folder = |{ iv_base_folder }{ iv_commit_object-devclass }|.
-          rv_name = |{ c_delim }{ iv_commit_object-objname }.trobj.txt|.
+          ev_file_folder = |{ iv_base_folder }{ lv_devclass }|.
+          rv_name = |{ lv_objname }.trobj.txt|.
         ELSE.
-          rv_name = |{ c_delimgit }{ iv_commit_object-objname }.trobj.txt|.
+          rv_name = |{ lv_objname }.trobj.txt|.
         ENDIF.
       ENDIF.
-
+    ELSEIF iv_commit_object-objtype = 'BRFP'.
+      IF iv_folder_structure = c_folder_structure_flat.
+        rv_name = |{ lv_objname }.brfp.xml|.
+      ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+        IF iv_local_folder = abap_true.
+          ev_file_folder = |{ iv_base_folder }{ lv_devclass }|.
+          rv_name = |{ lv_objname }.brfp.xml|.
+        ELSE.
+          rv_name = |{ lv_objname }.brfp.xml|.
+        ENDIF.
+      ENDIF.
     ELSEIF iv_commit_object-objtype = 'FUNC' OR iv_commit_object-objtype2 = 'FUNC'.
 
       " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
+        rv_name = |{ lv_fugr }.fugr.{ lv_objname }.abap|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
-        IF iv_commit_object-objname CP |L{ iv_commit_object-fugr }*|.
+        IF lv_objname CP |L{ iv_commit_object-fugr }*|.
           " include case
           IF iv_local_folder = abap_true.
-            ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes|.
-            rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes{ c_delim }{ iv_commit_object-objname }.abap|.
+            ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Function Groups{ c_delim }{ lv_fugr }{ c_delim }Includes|.
+            rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ lv_fugr }{ c_delim }Includes{ c_delim }{ lv_objname }.abap|.
           ELSE.
-            rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ iv_commit_object-fugr }{ c_delimgit }Includes{ c_delimgit }{ iv_commit_object-objname }.abap|.
+            rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ lv_fugr }{ c_delimgit }Includes{ c_delimgit }{ lv_objname }.abap|.
           ENDIF.
         ELSE.
           " function module case
           IF iv_local_folder = abap_true.
-            ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Function Modules|.
-            rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Function Modules{ c_delim }{ iv_commit_object-objname }.abap|.
+            ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Function Groups{ c_delim }{ lv_fugr }{ c_delim }Function Modules|.
+            rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ lv_fugr }{ c_delim }Function Modules{ c_delim }{ lv_objname }.abap|.
           ELSE.
-            rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ iv_commit_object-fugr }{ c_delimgit }Function Modules{ c_delimgit }{ iv_commit_object-objname }.abap|.
+            rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ lv_fugr }{ c_delimgit }Function Modules{ c_delimgit }{ lv_objname }.abap|.
           ENDIF.
         ENDIF.
       ENDIF.
@@ -491,27 +525,27 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " function group named as <function group name>.fugr.abap, not following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.fugr.abap|.
+        rv_name = |{ lv_objname }.fugr.abap|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
-          ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-objname }|.
-          rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-objname }{ c_delim }{ iv_commit_object-objname }.fugr.abap|.
+          ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Function Groups{ c_delim }{ lv_objname }|.
+          rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ lv_objname }{ c_delim }{ lv_objname }.fugr.abap|.
         ELSE.
-          rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ iv_commit_object-objname }{ c_delimgit }{ iv_commit_object-objname }.fugr.abap|.
+          rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ lv_objname }{ c_delimgit }{ lv_objname }.fugr.abap|.
         ENDIF.
       ENDIF.
 
-    ELSEIF iv_commit_object-objtype = 'REPS' AND iv_commit_object-fugr IS NOT INITIAL.
+    ELSEIF iv_commit_object-objtype = 'REPS' AND lv_fugr IS NOT INITIAL.
 
       " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-fugr }.fugr.{ iv_commit_object-objname }.abap|.
+        rv_name = |{ lv_fugr }.fugr.{ lv_objname }.abap|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
-          ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes|.
-          rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ iv_commit_object-fugr }{ c_delim }Includes{ c_delim }{ iv_commit_object-objname }.abap|.
+          ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Function Groups{ c_delim }{ lv_fugr }{ c_delim }Includes|.
+          rv_name = |Source Code Library{ c_delim }Function Groups{ c_delim }{ lv_fugr }{ c_delim }Includes{ c_delim }{ lv_objname }.abap|.
         ELSE.
-          rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ iv_commit_object-fugr }{ c_delimgit }Includes{ c_delimgit }{ iv_commit_object-objname }.abap|.
+          rv_name = |Source Code Library{ c_delimgit }Function Groups{ c_delimgit }{ lv_fugr }{ c_delimgit }Includes{ c_delimgit }{ lv_objname }.abap|.
         ENDIF.
       ENDIF.
 
@@ -519,13 +553,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " test class named as <class name>.clas.testclasses.abap, following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.clas.testclasses.abap|.
+        rv_name = |{ lv_objname }.clas.testclasses.abap|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Classes|.
-          rv_name = |Source Code Library{ c_delim }Classes{ c_delim }{ iv_commit_object-objname }.clas.testclasses.abap|.
+          rv_name = |Source Code Library{ c_delim }Classes{ c_delim }{ lv_objname }.clas.testclasses.abap|.
         ELSE.
-          rv_name = |Source Code Library{ c_delimgit }Classes{ c_delimgit }{ iv_commit_object-objname }.clas.testclasses.abap|.
+          rv_name = |Source Code Library{ c_delimgit }Classes{ c_delimgit }{ lv_objname }.clas.testclasses.abap|.
         ENDIF.
       ENDIF.
 
@@ -533,13 +567,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " enhancement implementation named as <enhancement name>.enho.abap, not following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.enho.abap|.
+        rv_name = |{ lv_objname }.enho.abap|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Enhancements{ c_delim }Enhancement Implementations|.
-          rv_name = |Enhancements{ c_delim }Enhancement Implementations{ c_delim }{ iv_commit_object-objname }.enho.abap|.
+          rv_name = |Enhancements{ c_delim }Enhancement Implementations{ c_delim }{ lv_objname }.enho.abap|.
         ELSE.
-          rv_name = |Enhancements{ c_delimgit }Enhancement Implementations{ c_delimgit }{ iv_commit_object-objname }.enho.abap|.
+          rv_name = |Enhancements{ c_delimgit }Enhancement Implementations{ c_delimgit }{ lv_objname }.enho.abap|.
         ENDIF.
       ENDIF.
 
@@ -547,13 +581,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " table object named as <table name>.tabl.json, not following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.tabl.json|.
+        rv_name = |{ lv_objname }.tabl.json|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Data Tables|.
-          rv_name = |Dictionary{ c_delim }Data Tables{ c_delim }{ iv_commit_object-objname }.tabl.json|.
+          rv_name = |Dictionary{ c_delim }Data Tables{ c_delim }{ lv_objname }.tabl.json|.
         ELSE.
-          rv_name = |Dictionary{ c_delimgit }Data Tables{ c_delimgit }{ iv_commit_object-objname }.tabl.json|.
+          rv_name = |Dictionary{ c_delimgit }Data Tables{ c_delimgit }{ lv_objname }.tabl.json|.
         ENDIF.
       ENDIF.
 
@@ -561,13 +595,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " data element object named as <object name>.dtel.json, not following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.dtel.json|.
+        rv_name = |{ lv_objname }.dtel.json|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Data Elements|.
-          rv_name = |Dictionary{ c_delim }Data Elements{ c_delim }{ iv_commit_object-objname }.dtel.json|.
+          rv_name = |Dictionary{ c_delim }Data Elements{ c_delim }{ lv_objname }.dtel.json|.
         ELSE.
-          rv_name = |Dictionary{ c_delimgit }Data Elements{ c_delimgit }{ iv_commit_object-objname }.dtel.json|.
+          rv_name = |Dictionary{ c_delimgit }Data Elements{ c_delimgit }{ lv_objname }.dtel.json|.
         ENDIF.
       ENDIF.
 
@@ -575,13 +609,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " domain object named as <object name>.doma.json, not following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.doma.json|.
+        rv_name = |{ lv_objname }.doma.json|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Domains|.
-          rv_name = |Dictionary{ c_delim }Domains{ c_delim }{ iv_commit_object-objname }.doma.json|.
+          rv_name = |Dictionary{ c_delim }Domains{ c_delim }{ lv_objname }.doma.json|.
         ELSE.
-          rv_name = |Dictionary{ c_delimgit }Domains{ c_delimgit }{ iv_commit_object-objname }.doma.json|.
+          rv_name = |Dictionary{ c_delimgit }Domains{ c_delimgit }{ lv_objname }.doma.json|.
         ENDIF.
       ENDIF.
 
@@ -589,13 +623,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " lock object named as <object name>.enqu.json, not following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.enqu.json|.
+        rv_name = |{ lv_objname }.enqu.json|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Lock Objects|.
-          rv_name = |Dictionary{ c_delim }Lock Objects{ c_delim }{ iv_commit_object-objname }.enqu.json|.
+          rv_name = |Dictionary{ c_delim }Lock Objects{ c_delim }{ lv_objname }.enqu.json|.
         ELSE.
-          rv_name = |Dictionary{ c_delimgit }Lock Objects{ c_delimgit }{ iv_commit_object-objname }.enqu.json|.
+          rv_name = |Dictionary{ c_delimgit }Lock Objects{ c_delimgit }{ lv_objname }.enqu.json|.
         ENDIF.
       ENDIF.
 
@@ -603,13 +637,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " search help object named as <object name>.shlp.json, not following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.shlp.json|.
+        rv_name = |{ lv_objname }.shlp.json|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Srch Helps|.
-          rv_name = |Dictionary{ c_delim }Srch Helps{ c_delim }{ iv_commit_object-objname }.shlp.json|.
+          rv_name = |Dictionary{ c_delim }Srch Helps{ c_delim }{ lv_objname }.shlp.json|.
         ELSE.
-          rv_name = |Dictionary{ c_delimgit }Srch Helps{ c_delimgit }{ iv_commit_object-objname }.shlp.json|.
+          rv_name = |Dictionary{ c_delimgit }Srch Helps{ c_delimgit }{ lv_objname }.shlp.json|.
         ENDIF.
       ENDIF.
 
@@ -617,13 +651,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " table type object named as <object name>.ttyp.json, not following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.ttyp.json|.
+        rv_name = |{ lv_objname }.ttyp.json|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Table Types|.
-          rv_name = |Dictionary{ c_delim }Table Types{ c_delim }{ iv_commit_object-objname }.ttyp.json|.
+          rv_name = |Dictionary{ c_delim }Table Types{ c_delim }{ lv_objname }.ttyp.json|.
         ELSE.
-          rv_name = |Dictionary{ c_delimgit }Table Types{ c_delimgit }{ iv_commit_object-objname }.ttyp.json|.
+          rv_name = |Dictionary{ c_delimgit }Table Types{ c_delimgit }{ lv_objname }.ttyp.json|.
         ENDIF.
       ENDIF.
 
@@ -631,13 +665,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " view object named as <object name>.view.json, not following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.view.json|.
+        rv_name = |{ lv_objname }.view.json|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Dictionary{ c_delim }Views|.
-          rv_name = |Dictionary{ c_delim }Views{ c_delim }{ iv_commit_object-objname }.view.json|.
+          rv_name = |Dictionary{ c_delim }Views{ c_delim }{ lv_objname }.view.json|.
         ELSE.
-          rv_name = |Dictionary{ c_delimgit }Views{ c_delimgit }{ iv_commit_object-objname }.view.json|.
+          rv_name = |Dictionary{ c_delimgit }Views{ c_delimgit }{ lv_objname }.view.json|.
         ENDIF.
       ENDIF.
 
@@ -645,13 +679,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " transformation XML object named as <object name>.xslt.json, not following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.xslt.json|.
+        rv_name = |{ lv_objname }.xslt.json|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Transformations|.
-          rv_name = |Source Code Library{ c_delim }Transformations{ c_delim }{ iv_commit_object-objname }.xslt.json|.
+          rv_name = |Source Code Library{ c_delim }Transformations{ c_delim }{ lv_objname }.xslt.json|.
         ELSE.
-          rv_name = |Source Code Library{ c_delimgit }Transformations{ c_delimgit }{ iv_commit_object-objname }.xslt.json|.
+          rv_name = |Source Code Library{ c_delimgit }Transformations{ c_delimgit }{ lv_objname }.xslt.json|.
         ENDIF.
       ENDIF.
 
@@ -659,37 +693,37 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " SAPSCRIPT FORM object named as <object name>.varx.txt
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.varx.txt|.
+        rv_name = |{ lv_objname }.varx.txt|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
-          ev_file_folder = |{ iv_base_folder }Report Variants{ c_delim }{ iv_commit_object-progcls }|.
-          rv_name = |Report Variants{ c_delim }{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.varx.txt|.
+          ev_file_folder = |{ iv_base_folder }Report Variants{ c_delim }{ lv_progcls }|.
+          rv_name = |Report Variants{ c_delim }{ lv_progcls }{ c_delim }{ lv_objname }.varx.txt|.
         ELSE.
-          rv_name = |Report Variants{ c_delimgit }{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.varx.txt|.
+          rv_name = |Report Variants{ c_delimgit }{ lv_progcls }{ c_delimgit }{ lv_objname }.varx.txt|.
         ENDIF.
       ENDIF.
 
     ELSEIF iv_commit_object-objtype = 'MSAD'.
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.msad.json|.
+        rv_name = |{ lv_objname }.msad.json|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
-          ev_file_folder = |{ iv_base_folder }Message Classes{ c_delim }{ iv_commit_object-progcls }|.
-          rv_name = |Message Classes{ c_delim }{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.msad.json|.
+          ev_file_folder = |{ iv_base_folder }Message Classes{ c_delim }{ lv_progcls }|.
+          rv_name = |Message Classes{ c_delim }{ lv_progcls }{ c_delim }{ lv_objname }.msad.json|.
         ELSE.
-          rv_name = |Message Classes{ c_delimgit }{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.msad.json|.
+          rv_name = |Message Classes{ c_delimgit }{ lv_progcls }{ c_delimgit }{ lv_objname }.msad.json|.
         ENDIF.
       ENDIF.
 
     ELSEIF iv_commit_object-objtype = 'MESS'.
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.mess.json|.
+        rv_name = |{ lv_objname }.mess.json|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
-          ev_file_folder = |{ iv_base_folder }Message Classes{ c_delim }{ iv_commit_object-progcls }|.
-          rv_name = |Message Classes{ c_delim }{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.mess.json|.
+          ev_file_folder = |{ iv_base_folder }Message Classes{ c_delim }{ lv_progcls }|.
+          rv_name = |Message Classes{ c_delim }{ lv_progcls }{ c_delim }{ lv_objname }.mess.json|.
         ELSE.
-          rv_name = |Message Classes{ c_delimgit }{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.mess.json|.
+          rv_name = |Message Classes{ c_delimgit }{ lv_progcls }{ c_delimgit }{ lv_objname }.mess.json|.
         ENDIF.
       ENDIF.
 
@@ -697,13 +731,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " SAPSCRIPT FORM object named as <object name>.form.txt
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.form.txt|.
+        rv_name = |{ lv_objname }.form.txt|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Forms|.
-          rv_name = |Source Code Library{ c_delim }Forms{ c_delim }{ iv_commit_object-objname }.form.txt|.
+          rv_name = |Source Code Library{ c_delim }Forms{ c_delim }{ lv_objname }.form.txt|.
         ELSE.
-          rv_name = |Source Code Library{ c_delimgit }Forms{ c_delimgit }{ iv_commit_object-objname }.form.txt|.
+          rv_name = |Source Code Library{ c_delimgit }Forms{ c_delimgit }{ lv_objname }.form.txt|.
         ENDIF.
       ENDIF.
 
@@ -711,13 +745,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " screen object named as <object name>.dynp.abap, not following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.dynp.abap|.
+        rv_name = |{ lv_objname }.dynp.abap|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Programs|.
-          rv_name = |Source Code Library{ c_delim }Programs{ c_delim }{ iv_commit_object-objname }.dynp.abap|.
+          rv_name = |Source Code Library{ c_delim }Programs{ c_delim }{ lv_objname }.dynp.abap|.
         ELSE.
-          rv_name = |Source Code Library{ c_delimgit }Programs{ c_delimgit }{ iv_commit_object-objname }.dynp.abap|.
+          rv_name = |Source Code Library{ c_delimgit }Programs{ c_delimgit }{ lv_objname }.dynp.abap|.
         ENDIF.
       ENDIF.
 
@@ -725,7 +759,7 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " report text object named as <object name>.rept.txt, not following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.rept.txt|.
+        rv_name = |{ lv_objname }.rept.txt|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         DATA(lv_codetype) = 'Programs'.
         IF iv_commit_object-objtype2 = 'CLAS'.
@@ -733,9 +767,9 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
         ENDIF.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }{ lv_codetype }|.
-          rv_name = |Source Code Library{ c_delim }{ lv_codetype }{ c_delim }{ iv_commit_object-objname }.rept.txt|.
+          rv_name = |Source Code Library{ c_delim }{ lv_codetype }{ c_delim }{ lv_objname }.rept.txt|.
         ELSE.
-          rv_name = |Source Code Library{ c_delimgit }{ lv_codetype }{ c_delimgit }{ iv_commit_object-objname }.rept.txt|.
+          rv_name = |Source Code Library{ c_delimgit }{ lv_codetype }{ c_delimgit }{ lv_objname }.rept.txt|.
         ENDIF.
       ENDIF.
 
@@ -743,13 +777,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " SAPScript object named as <object name>.text.txt, not following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.text.txt|.
+        rv_name = |{ lv_objname }.text.txt|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }Texts|.
-          rv_name = |Source Code Library{ c_delim }Texts{ c_delim }{ iv_commit_object-objname }.text.txt|.
+          rv_name = |Source Code Library{ c_delim }Texts{ c_delim }{ lv_objname }.text.txt|.
         ELSE.
-          rv_name = |Source Code Library{ c_delimgit }Texts{ c_delimgit }{ iv_commit_object-objname }.text.txt|.
+          rv_name = |Source Code Library{ c_delimgit }Texts{ c_delimgit }{ lv_objname }.text.txt|.
         ENDIF.
       ENDIF.
 
@@ -757,13 +791,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " schema named as <schema name>.schm.txt
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.schm.txt|.
+        rv_name = |{ lv_objname }.schm.txt|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
-          ev_file_folder = |{ iv_base_folder }Schema{ c_delim }{ iv_commit_object-progcls }|.
-          rv_name = |Schema{ c_delim }{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.schm.txt|.
+          ev_file_folder = |{ iv_base_folder }Schema{ c_delim }{ lv_progcls }|.
+          rv_name = |Schema{ c_delim }{ lv_progcls }{ c_delim }{ lv_objname }.schm.txt|.
         ELSE.
-          rv_name = |Schema{ c_delimgit }{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.schm.txt|.
+          rv_name = |Schema{ c_delimgit }{ lv_progcls }{ c_delimgit }{ lv_objname }.schm.txt|.
         ENDIF.
       ENDIF.
 
@@ -771,13 +805,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " PCR named as <schema name>.pcr.txt
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.pcr.txt|.
+        rv_name = |{ lv_objname }.pcr.txt|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
-          ev_file_folder = |{ iv_base_folder }PCR{ c_delim }{ iv_commit_object-progcls }|.
-          rv_name = |PCR{ c_delim }{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.pcr.txt|.
+          ev_file_folder = |{ iv_base_folder }PCR{ c_delim }{ lv_progcls }|.
+          rv_name = |PCR{ c_delim }{ lv_progcls }{ c_delim }{ lv_objname }.pcr.txt|.
         ELSE.
-          rv_name = |PCR{ c_delimgit }{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.pcr.txt|.
+          rv_name = |PCR{ c_delimgit }{ lv_progcls }{ c_delimgit }{ lv_objname }.pcr.txt|.
         ENDIF.
       ENDIF.
 
@@ -788,7 +822,7 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
       " others named as <object name>.<object type, PROG|CLAS|INTF|...>.abap, following abapGit
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
+        rv_name = |{ lv_objname }.{ iv_commit_object-objtype }.abap|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_commit_object-objtype = 'PROG'.
           IF iv_commit_object-subc = '1'.
@@ -805,9 +839,9 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
         ENDIF.
         IF iv_local_folder = abap_true.
           ev_file_folder = |{ iv_base_folder }Source Code Library{ c_delim }{ lv_type }|.
-          rv_name = |Source Code Library{ c_delim }{ lv_type }{ c_delim }{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
+          rv_name = |Source Code Library{ c_delim }{ lv_type }{ c_delim }{ lv_objname }.{ iv_commit_object-objtype }.abap|.
         ELSE.
-          rv_name = |Source Code Library{ c_delimgit }{ lv_type }{ c_delimgit }{ iv_commit_object-objname }.{ iv_commit_object-objtype }.abap|.
+          rv_name = |Source Code Library{ c_delimgit }{ lv_type }{ c_delimgit }{ lv_objname }.{ iv_commit_object-objtype }.abap|.
         ENDIF.
       ENDIF.
 
@@ -817,13 +851,13 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
       DATA(lv_tblkey) = iv_commit_object-tblkey.
       TRANSLATE lv_tblkey TO UPPER CASE.
       IF iv_folder_structure = c_folder_structure_flat.
-        rv_name = |{ iv_commit_object-objname }.{ lv_tblkey }.{ iv_commit_object-progcls }.txt|.
+        rv_name = |{ lv_objname }.{ lv_tblkey }.{ lv_progcls }.txt|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
         IF iv_local_folder = abap_true.
-          ev_file_folder = |{ iv_base_folder }{ iv_commit_object-devclass }|.
-          rv_name = |{ iv_commit_object-progcls }{ c_delim }{ iv_commit_object-objname }.{ lv_tblkey }.{ iv_commit_object-progcls }.txt|.
+          ev_file_folder = |{ iv_base_folder }{ lv_devclass }|.
+          rv_name = |{ lv_progcls }{ c_delim }{ lv_objname }.{ lv_tblkey }.{ lv_progcls }.txt|.
         ELSE.
-          rv_name = |{ iv_commit_object-progcls }{ c_delimgit }{ iv_commit_object-objname }.{ lv_tblkey }.{ iv_commit_object-progcls }.txt|.
+          rv_name = |{ lv_progcls }{ c_delimgit }{ lv_objname }.{ lv_tblkey }.{ lv_progcls }.txt|.
         ENDIF.
       ENDIF.
 
@@ -1144,7 +1178,8 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
       lv_read = 'false'.
     ENDIF.
     " ADO REST API needs escaping for % for item path
-    DATA(lv_itempathescaped) = replace( val = iv_itempath sub = '%' with = '%25' ).
+    DATA(lv_itempathescaped) = iv_itempath.
+    REPLACE ALL OCCURRENCES OF '%' IN lv_itempathescaped WITH '%25'.
     DATA(itemPath) = |{ me->orgid }/_apis/git/repositories/{ me->repoid }/items?path={ lv_itempathescaped }&includeContent={ lv_read }&versionDescriptor.version={ iv_branch }&versionDescriptor.versionType=branch&api-version=7.1-preview.1|.
     DATA lv_status TYPE i.
     ev_content = ''.
@@ -1239,8 +1274,14 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
 
   METHOD get_trs_daterange.
 
+    DATA lv_status TYPE string.
+    IF iv_mode = 'latest'.
+        lv_status = c_relests.
+    ELSEIF iv_mode = 'active'.
+        lv_status = 'D'.
+    ENDIF.
     SELECT trkorr, as4user, as4date, as4time, trfunction INTO TABLE @et_trids FROM e070
-        WHERE ( trfunction = @c_custtrfunc OR trfunction = @c_wkbtrfunc ) AND trstatus = @c_relests AND as4date >= @iv_fromdat AND as4date <= @iv_todat.
+        WHERE ( trfunction = @c_custtrfunc OR trfunction = @c_wkbtrfunc ) AND trstatus = @lv_status AND as4date >= @iv_fromdat AND as4date <= @iv_todat.
     SORT et_trids BY dat tim.
 
   ENDMETHOD.

@@ -7,10 +7,10 @@
 " Code: Class, Function Module, Program, Include, Test Class, Interface,
 " Enhancement Object (hook implementation, class), Transformation,
 " Dictionary: Data Table, Data Element, Domain, Lock Object, Search Help, Table Type, View
-" SAPScript, Variant
-" HR/payroll schema/PCR, configuration changes.
+" SAPScript, Variant, Message Class
+" HR/payroll schema/PCR, configuration changes, BRF plus as XML
 " Following ABAP objects are not yet included in sync-ing:
-" Data dictionary objects (others), SAPScript, enhancement objects (others) and other objects.
+" enhancement objects (others) and other objects.
 " Deleted objects are not sync-ed since it's not found which package it was in.
 " Two modes are suggested in sync-ing to Git repo:
 " 1. Latest version mode, where latest version of an ABAP object, if any, is valued while
@@ -21,8 +21,8 @@
 "    in SAP in running the code.
 " Latest version mode should be used for CI purpose since the quality of codes should be
 " verified against the state to transport to integration/UAT/PROD system.
-" Active version mode should be used for exploring what are inside a given system (for
-" static scan/analysis).
+" Active version mode should be used for code review or exploring what are inside a given system
+" (for static scan/analysis).
 " ADO PAT requires privilege to have code read/write or full, identity read (to specify real author
 " upon pushing ADO commit)
 CLASS zcl_utility_abaptogit DEFINITION
@@ -46,6 +46,7 @@ CLASS zcl_utility_abaptogit DEFINITION
              path TYPE string,
              date TYPE string,
              time TYPE string,
+             type TYPE string,
            END OF ty_obj_update.
     TYPES: tty_obj_updates TYPE TABLE OF ty_obj_update WITH KEY path.
 
@@ -111,6 +112,17 @@ CLASS zcl_utility_abaptogit DEFINITION
                 iv_folder_structure TYPE string DEFAULT 'eclipse'
       RETURNING VALUE(rv_success)   TYPE abap_bool.
 
+    " fetch class info for ABAP class object (excluding unit tests) in specific package
+    " iv_packagename - package name
+    " iv_mode - 'latest' or 'active'
+    " et_classes - class info list
+    METHODS get_package_classes
+        IMPORTING
+            iv_packagename  TYPE devclass
+            iv_mode         TYPE string
+        EXPORTING
+            et_classes      TYPE zcl_utility_abaptogit_tr=>tty_classes.
+
     " setup configs for ADO operations
     " iv_username - VSO user name as email address
     " iv_pat - VSO personal access token, could be generated from VSO portal per user with code change permission
@@ -175,6 +187,7 @@ CLASS zcl_utility_abaptogit DEFINITION
     " iv_packagenames - package names to include in commit, separated by comma
     " iv_fromdat - date to include from
     " iv_todat - date to include to
+    " iv_mode - latest/active, blank means any
     " iv_resultfile - result file for heatmap
     " it_users - user filter, not applicable if empty
     METHODS heatmap_trs
@@ -182,6 +195,7 @@ CLASS zcl_utility_abaptogit DEFINITION
                 iv_packagenames   TYPE string
                 iv_fromdat        TYPE d
                 iv_todat          TYPE d
+                iv_mode           TYPE string DEFAULT 'latest'
                 iv_resultfile     TYPE string
                 it_users          TYPE tty_users
       RETURNING VALUE(rv_success) TYPE abap_bool.
@@ -379,7 +393,7 @@ ENDCLASS.
 
 
 
-CLASS zcl_utility_abaptogit IMPLEMENTATION.
+CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
 
   METHOD catchup_trs.
@@ -753,9 +767,10 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
       EXPORTING
         dirname = lv_folder
       EXCEPTIONS
-        failed  = 1.
+        failed  = 1
+        OTHERS = 2.
     IF sy-subrc <> 0.
-      me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS fails to create folder { lv_folder }| ).
+      me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS creates existing folder { lv_folder }| ).
     ENDIF.
 
     " download schemas
@@ -793,9 +808,10 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
           EXPORTING
             dirname = lv_folder
           EXCEPTIONS
-            OTHERS  = 1. "#EC FB_RC
+            failed = 1
+            OTHERS  = 2. "#EC FB_RC
         IF sy-subrc <> 0.
-          " folder may exist
+          me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS creates existing folder { lv_folder }| ).
         ENDIF.
       ENDIF.
       lv_path = |{ lv_basefolder }{ zcl_utility_abaptogit_tr=>c_schemapcr }{ c_delim }{ lv_code_name }|.
@@ -852,12 +868,14 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
           EXPORTING
             dirname = lv_folder
           EXCEPTIONS
-            OTHERS  = 1. "#EC FB_RC
+            failed = 1
+            OTHERS  = 2. "#EC FB_RC
         IF sy-subrc <> 0.
-          " folder may exist
+          me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS creates existing folder { lv_folder }| ).
         ENDIF.
       ENDIF.
       lv_path = |{ lv_basefolder }{ zcl_utility_abaptogit_tr=>c_schemapcr }{ c_delim }{ lv_code_name }|.
+
       CALL FUNCTION 'GUI_DOWNLOAD'
         EXPORTING
           filename              = lv_path
@@ -866,7 +884,7 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
         TABLES
           data_tab              = lt_filecontent
         EXCEPTIONS
-          OTHERS                = 1.
+         OTHERS                          = 1.
       IF sy-subrc <> 0.
         me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS fails to save local file { lv_path }| ).
         rv_success = abap_false.
@@ -1746,6 +1764,70 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
 
   ENDMETHOD.
 
+
+  METHOD get_package_classes.
+
+    DATA wacode TYPE ts_code_object.
+    DATA lv_subpackage TYPE devclass.
+    DATA lt_subpackages TYPE zcl_utility_abaptogit_tr=>tty_package.
+    DATA lt_codes TYPE STANDARD TABLE OF ts_code_object.
+    DATA lt_objversions TYPE zcl_utility_abaptogit_tr=>tty_version_no.
+    DATA lv_version_no TYPE i.
+    DATA lv_objname TYPE versobjnam.
+    DATA lv_objtype TYPE versobjtyp.
+    DATA lv_objname2 TYPE string.
+    DATA lv_objname3 TYPE e071-obj_name.
+    DATA lv_success TYPE abap_bool.
+
+    " find all sub packages including the package to filter in
+    me->oref_tr->get_subpackages(
+        EXPORTING
+            iv_package = iv_packagename
+        IMPORTING
+            et_packages = lt_subpackages
+             ).
+
+    LOOP AT lt_subpackages INTO lv_subpackage.
+      SELECT obj_name, object, object, ' ', @lv_subpackage APPENDING TABLE @lt_codes FROM tadir
+          WHERE devclass = @lv_subpackage AND pgmid = 'R3TR' AND object = 'CLAS'. "#EC CI_SGLSELECT
+    ENDLOOP.
+
+    LOOP AT lt_codes INTO wacode.
+
+      lv_objname = wacode-obj_name.
+      lv_objtype = wacode-obj_type.
+      lv_objname2 = lv_objname.
+      lv_objname3 = lv_objname.
+
+      CLEAR lt_objversions.
+
+      lv_success = me->oref_tr->get_versions_no(
+          EXPORTING
+              iv_objname = lv_objname3
+              iv_objtype = lv_objtype
+              iv_mode = iv_mode
+              iv_findtest = abap_true
+          IMPORTING
+              ev_version_no = lv_version_no
+          CHANGING
+              cht_objversions = lt_objversions
+           ).
+      CHECK lv_success = abap_true.
+      CHECK lines( lt_objversions ) > 0.
+
+      me->oref_tr->get_class_info(
+          EXPORTING
+              iv_name = lv_objname2
+              it_objversions = lt_objversions
+          IMPORTING
+              et_classes = et_classes
+            ).
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
   METHOD get_related_pullrequest.
     DATA lv_slrelbranch TYPE string.
     DATA lv_owner TYPE string.
@@ -1793,7 +1875,7 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
             iv_trid = iv_trid
             iv_packagenames = iv_packagenames
             iv_mode = zcl_utility_abaptogit_tr=>c_active_version
-            iv_needcontent = abap_false
+            iv_needcontent = abap_true
             it_excl_objs = it_excl_objs
             it_excl_tbls = it_excl_tbls
         IMPORTING
@@ -1829,7 +1911,8 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
       APPEND VALUE ty_obj_update(
           path = lv_filepath
           date = |{ <fs>-date }|
-          time = |{ <fs>-time }| )
+          time = |{ <fs>-time }|
+          type = <fs>-objtype )
           TO et_items.
     ENDLOOP.
 
@@ -1837,10 +1920,29 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
       ev_date = lv_date.
       ev_time = lv_time.
     ELSE.
-      ev_date = '01012000'.
+      ev_date = '20000101'.
       ev_time = '000000'.
     ENDIF.
 
+  ENDMETHOD.
+
+
+  METHOD get_utc_datetime.
+    DATA lv_tstmp TYPE timestamp.
+    DATA lv_tstmptext TYPE string.
+    DATA lv_dateutc TYPE string.
+    DATA lv_timeutc TYPE string.
+    IF iv_date = '00000000'.
+      ev_date = iv_date.
+      ev_time = iv_time.
+      RETURN.
+    ENDIF.
+    CONVERT DATE iv_date TIME iv_time INTO TIME STAMP lv_tstmp TIME ZONE sy-zonlo.
+    lv_tstmptext = lv_tstmp.
+    lv_dateutc = |{ lv_tstmptext(8) }|.
+    lv_timeutc = |{ lv_tstmptext+8 }|.
+    ev_date = |{ lv_dateutc(4) }{ lv_dateutc+4(2) }{ lv_dateutc+6(2) }|.
+    ev_time = |{ lv_timeutc(2) }{ lv_timeutc+2(2) }{ lv_timeutc+4(2) }|.
   ENDMETHOD.
 
 
@@ -1879,11 +1981,12 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
         EXPORTING
             iv_fromdat = iv_fromdat
             iv_todat = iv_todat
+            iv_mode = iv_mode
         IMPORTING
             et_trids = lt_trids
              ).
 
-    APPEND |System,User,TR,Date,Time,Objects,Insertions,Deletions,Tables,Rows| TO lt_stats.
+    APPEND |System,User,TR,Function,Date,Time,Objects,Insertions,Deletions,Tables,Rows| TO lt_stats.
 
     LOOP AT lt_trids INTO DATA(wa_trid).
       IF lines( it_users ) > 0 AND NOT line_exists( it_users[ table_line = wa_trid-user ] ).
@@ -1894,6 +1997,7 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
           EXPORTING
               iv_trid = wa_trid-trid
               iv_packagenames = iv_packagenames
+              iv_mode = iv_mode
               iv_deltastats = abap_true
           CHANGING
               it_commit_objects = lt_commit_objects
@@ -1909,7 +2013,7 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
       ENDLOOP.
       DATA(lv_date) = |{ wa_trid-dat+4(2) }/{ wa_trid-dat+6(2) }/{ wa_trid-dat(4) }|.
       DATA(lv_time) = |{ wa_trid-tim(2) }:{ wa_trid-tim+2(2) }:{ wa_trid-tim+4(2) }|.
-      APPEND |{ sy-sysid },{ wa_trid-user },{ wa_trid-trid },{ lv_date },{ lv_time },{ lv_objects },{ lv_insertions },{ lv_deletions },{ lv_tables },{ lv_rows }| TO lt_stats.
+      APPEND |{ sy-sysid },{ wa_trid-user },{ wa_trid-trid },{ wa_trid-func },{ lv_date },{ lv_time },{ lv_objects },{ lv_insertions },{ lv_deletions },{ lv_tables },{ lv_rows }| TO lt_stats.
     ENDLOOP.
 
     CALL FUNCTION 'GUI_DOWNLOAD'
@@ -2087,9 +2191,10 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
       EXPORTING
         dirname = lv_folder
       EXCEPTIONS
-        OTHERS  = 1.
+        FAILED = 1
+        OTHERS  = 2.
     IF sy-subrc <> 0.
-      " folder may exist
+      me->write_telemetry( iv_message = |SAVE_FILE creates existing folder { lv_folder }| ).
     ENDIF.
     lv_code_name = zcl_utility_abaptogit_ado=>build_code_name(
         EXPORTING
@@ -2109,7 +2214,7 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
         EXCEPTIONS
           OTHERS  = 1. "#EC FB_RC
       IF sy-subrc <> 0.
-        " folder may exist
+          me->write_telemetry( iv_message = |SAVE_FILE creates existing folder { lv_folder }| ).
       ENDIF.
     ENDIF.
     lv_path = |{ iv_basefolder }{ iv_devclass }{ c_delim }{ lv_code_name }|.
@@ -2186,25 +2291,6 @@ CLASS zcl_utility_abaptogit IMPLEMENTATION.
       me->write_telemetry( iv_message = |push TR { iv_trid } objects ({ lv_synccnt }) to system branch { lv_basebranch }: { sy-uzeit }| iv_kind = 'info' ).
     ENDIF.
 
-  ENDMETHOD.
-
-
-  METHOD get_utc_datetime.
-    DATA lv_tstmp TYPE timestamp.
-    DATA lv_tstmptext TYPE string.
-    DATA lv_dateutc TYPE string.
-    DATA lv_timeutc TYPE string.
-    IF iv_date = '00000000'.
-      ev_date = iv_date.
-      ev_time = iv_time.
-      RETURN.
-    ENDIF.
-    CONVERT DATE iv_date TIME iv_time INTO TIME STAMP lv_tstmp TIME ZONE sy-zonlo.
-    lv_tstmptext = lv_tstmp.
-    lv_dateutc = |{ lv_tstmptext(8) }|.
-    lv_timeutc = |{ lv_tstmptext+8 }|.
-    ev_date = |{ lv_dateutc(4) }{ lv_dateutc+4(2) }{ lv_dateutc+6(2) }|.
-    ev_time = |{ lv_timeutc(2) }{ lv_timeutc+2(2) }{ lv_timeutc+4(2) }|.
   ENDMETHOD.
 
 
