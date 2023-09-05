@@ -7,7 +7,7 @@
 " Code: Class, Function Module, Program, Include, Test Class, Interface,
 " Enhancement Object (hook implementation, class), Transformation,
 " Dictionary: Data Table, Data Element, Domain, Lock Object, Search Help, Table Type, View
-" SAPScript, Variant, Message Class
+" SAPScript, Variant, Message Class, Web Dynpro
 " HR/payroll schema/PCR, configuration changes, BRF plus as XML
 " Following ABAP objects are not yet included in sync-ing:
 " enhancement objects (others) and other objects.
@@ -53,12 +53,17 @@ CLASS zcl_utility_abaptogit DEFINITION
     " constructor
     " io_objtelemetry - class object for telemetry
     " iv_methtelemetry - method name for telemetry
+    " io_objmetadata - class object for metadata
+    " iv_methmetadata - method name for metadata
     " for telemetry, the method will be invoked with parameters
     " iv_message as string (for message content) and iv_kind as string (for category)
+    " for metadata, the method will be invoked with parameters iv_pkg as string (for object package if any), iv_name as string (for object name) and iv_type as string (for object type) and return string as rv_metadata
     METHODS constructor
       IMPORTING
         io_objtelemetry  TYPE REF TO object OPTIONAL
-        iv_methtelemetry TYPE string OPTIONAL.
+        iv_methtelemetry TYPE string OPTIONAL
+        io_objmetadata   TYPE REF TO object OPTIONAL
+        iv_methmetadata  TYPE string OPTIONAL.
 
     " fetch HR/payroll schema/PCR language code lines into files
     " iv_folder - local folder name to save the files
@@ -300,6 +305,7 @@ CLASS zcl_utility_abaptogit DEFINITION
     " ev_date - latest update date
     " ev_time - latest update time
     " et_items - TR object updates
+    " ev_ossnote - TR has OSS note or not
     METHODS get_tr_object_latest_update
       IMPORTING
         iv_packagenames TYPE string
@@ -310,7 +316,8 @@ CLASS zcl_utility_abaptogit DEFINITION
         ev_owner        TYPE string
         ev_date         TYPE d
         ev_time         TYPE t
-        et_items        TYPE tty_obj_updates.
+        et_items        TYPE tty_obj_updates
+        ev_ossnote      TYPE abap_bool.
 
     " get modifiable TRs from current user or given one
     " iv_user - given user to fetch TRs
@@ -351,6 +358,14 @@ CLASS zcl_utility_abaptogit DEFINITION
              fugr_name TYPE sobj_name,
              devclass  TYPE devclass,
            END OF ts_code_object.
+
+    TYPES: BEGIN OF ts_code_object_wydc,
+             obj_name  TYPE e071-obj_name,
+             obj_type  TYPE trobjtype,
+             obj_type2 TYPE trobjtype,
+             fugr_name TYPE sobj_name,
+             devclass  TYPE devclass,
+           END OF ts_code_object_wydc.
 
     " helper objects for ADO and TR operations
     DATA oref_ado TYPE REF TO zcl_utility_abaptogit_ado.
@@ -557,7 +572,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     CREATE OBJECT me->oref_tr
       EXPORTING
         io_objtelemetry  = io_objtelemetry
-        iv_methtelemetry = iv_methtelemetry.
+        iv_methtelemetry = iv_methtelemetry
+        io_objmetadata = io_objmetadata
+        iv_methmetadata = iv_methmetadata.
 
     IF io_objtelemetry IS SUPPLIED.
       me->oref_telemetry = io_objtelemetry.
@@ -884,7 +901,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         TABLES
           data_tab              = lt_filecontent
         EXCEPTIONS
-         OTHERS                          = 1.
+          OTHERS                = 1.
       IF sy-subrc <> 0.
         me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS fails to save local file { lv_path }| ).
         rv_success = abap_false.
@@ -1015,6 +1032,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lt_fugrs TYPE STANDARD TABLE OF ts_code_object.
     DATA lt_progs TYPE STANDARD TABLE OF ts_code_object.
     DATA lt_msags TYPE STANDARD TABLE OF ts_code_object.
+    DATA lt_wdyc TYPE STANDARD TABLE OF ts_code_object_wydc.
     DATA lt_scnnums TYPE STANDARD TABLE OF d020s-dnum.
     DATA lv_basefolder TYPE string.
     DATA lt_subpackages TYPE zcl_utility_abaptogit_tr=>tty_package.
@@ -1359,6 +1377,30 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 *          CONTINUE.
 *        ENDIF.
 
+      ELSEIF lv_objtype = 'WDYN'.
+        " Get web dynpro controller by definition(wdyn)
+        DATA lt_wdyc_name TYPE TABLE OF wdy_controller.
+        DATA lv_wdyctemp TYPE ts_code_object_wydc.
+        zcl_utility_abaptogit_fmt=>get_wdyc_by_wdyn( EXPORTING iv_wdyn_name = lv_objname3 IMPORTING et_wdyc_name = lt_wdyc_name ).
+        LOOP AT lt_wdyc_name INTO DATA(lv_wdyc).
+            DATA(lv_wdyc_name) = lv_objname3.
+            lv_wdyc_name+30 = lv_wdyc-controller_name.
+            lv_wdyctemp-obj_name = lv_wdyc_name.
+            lv_wdyctemp-obj_type = 'WDYC'.
+            lv_wdyctemp-fugr_name = lv_objname3.
+            lv_wdyctemp-devclass = wacode-devclass.
+            APPEND lv_wdyctemp TO lt_wdyc.
+            CLEAR: lv_wdyc,lv_wdyctemp.
+        ENDLOOP.
+
+        lv_success = me->oref_tr->build_wdyd_json(
+          EXPORTING
+              iv_version = lt_objversions[ 1 ]-objversionno
+              iv_objname = lt_objversions[ 1 ]-objname
+          IMPORTING
+              ev_filecontent = lv_filecontent
+              et_filecontent = lt_filecontent
+              ).
       ELSE.
 
         " construct object content (and test class content if any) as source code lines
@@ -1762,6 +1804,74 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
                ).
     ENDLOOP.
 
+    LOOP AT lt_wdyc INTO DATA(wawdyc).
+      lv_objname3 = |{ wawdyc-obj_name }|.
+      lv_objtype = 'WDYC'.
+      CLEAR: lv_version_no, lt_objversions, lt_filecontent, lv_filecontent.
+      lv_success = me->oref_tr->get_versions_no(
+          EXPORTING
+              iv_objname = lv_objname3
+              iv_objtype = wawdyc-obj_type
+              iv_mode = iv_mode
+              iv_trid = lv_trid
+              iv_date = lv_dat
+              iv_time = lv_tim
+              iv_findtest = abap_false
+          IMPORTING
+              ev_version_no = lv_version_no
+          CHANGING
+              cht_objversions = lt_objversions
+              ).
+
+      CHECK lv_success = abap_true.
+      CHECK lv_version_no > 0.
+
+      DATA lt_wdyc_content TYPE zcl_utility_abaptogit_tr=>tty_controller_content.
+      DATA lv_objectname TYPE string.
+      DATA lv_len TYPE i.
+      DATA lv_controller_name TYPE string.
+      DATA lv_component_name TYPE string.
+
+      lv_objectname = lt_objversions[ 1 ]-objname.
+      lv_len = strlen( lv_objectname ) - 30.
+      lv_controller_name = lv_objectname+30(lv_len).
+      lv_component_name = lv_objectname(30).
+      CONDENSE lv_component_name.
+
+      lv_success = me->oref_tr->build_wdyc_json(
+      EXPORTING
+          iv_version = lt_objversions[ 1 ]-objversionno
+          iv_controllername = lv_controller_name
+          iv_componentname = lv_component_name
+          iv_mode = iv_mode
+      IMPORTING
+          et_filecontent = lt_wdyc_content
+          ).
+
+      CHECK lv_success = abap_true.
+      lv_objname = |{ lv_component_name }_{ lv_controller_name }|.
+      lv_commit_object-objname = lv_objname.
+      lv_commit_object-objtype = lv_objtype.
+      lv_commit_object-devclass = wafugr-devclass.
+      LOOP AT lt_wdyc_content INTO DATA(lv_wdyc_content).
+        SPLIT lv_wdyc_content-controller_content AT cl_abap_char_utilities=>newline INTO TABLE lt_filecontent.
+        lv_commit_object-objtype2 = lv_wdyc_content-controller_content_type.
+        lv_commit_object-fugr = lv_component_name.
+        lv_success = me->save_file(
+          EXPORTING
+              iv_commit_object = lv_commit_object
+              iv_basefolder = lv_basefolder
+              iv_folder_structure = iv_folder_structure
+              iv_devclass = wacode-devclass
+          IMPORTING
+              ev_codefolder = lv_codefolder
+              ev_filefolder = lv_filefolder
+          CHANGING
+              cht_filefolders = lt_filefolders
+              cht_filecontent = lt_filecontent
+               ).
+     ENDLOOP.
+    ENDLOOP.
   ENDMETHOD.
 
 
@@ -1881,6 +1991,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
         IMPORTING
             ev_owner = ev_owner
             ev_comment = lv_comment
+            ev_ossnote = ev_ossnote
         CHANGING
             it_commit_objects = lt_commit_objects
              ).

@@ -29,6 +29,12 @@ public section.
           !EV_ERRORMESSAGE type STRING
         RETURNING VALUE(rv_success) TYPE abap_bool.
 
+  class-methods GET_WDYC_BY_WDYN
+    importing
+      !IV_WDYN_NAME type E071-OBJ_NAME
+    exporting
+      !ET_WDYC_NAME type TABLE .
+
 protected section.
 
 private section.
@@ -1266,4 +1272,12 @@ CLASS ZCL_UTILITY_ABAPTOGIT_FMT IMPLEMENTATION.
     ENDLOOP.
 
   ENDMETHOD.
+
+
+  method GET_WDYC_BY_WDYN.
+    DATA lt_wdyc_name TYPE TABLE OF wdy_controller.
+    select component_name, controller_name, version from wdy_controller where component_name = @iv_wdyn_name and ( controller_type eq 00 or controller_type eq 02 )
+      into table @lt_wdyc_name.
+      et_wdyc_name = lt_wdyc_name.
+  endmethod.
 ENDCLASS.
