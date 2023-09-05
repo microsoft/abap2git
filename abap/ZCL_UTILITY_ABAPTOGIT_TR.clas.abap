@@ -2,7 +2,7 @@
 CLASS zcl_utility_abaptogit_tr DEFINITION
   PUBLIC
   FINAL
-  CREATE PUBLIC .
+  CREATE PUBLIC.
 
   PUBLIC SECTION.
 
@@ -117,14 +117,87 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
     " brf app list
     TYPES: tty_brf_app TYPE TABLE OF string.
 
+    " webdynpro info
+    TYPES: BEGIN OF ty_s_component_usage,
+             compo_usage_name TYPE c LENGTH 21,
+             used_component   TYPE wdy_component_name,
+             comp_ctlr_usage  TYPE wdy_controller_usage_name,  "ext mapping
+           END OF ty_s_component_usage,
+           ty_t_component_usage TYPE STANDARD TABLE OF ty_s_component_usage
+                WITH KEY compo_usage_name ,
+           ty_wdy_def_type TYPE if_wdy_md_adt_component=>gty_s_component_definition,
+           ty_wdy_inter_type TYPE if_wdy_md_adt_component=>gty_t_interface_implementing,
+
+           BEGIN OF tty_s_component,
+             definition TYPE ty_wdy_def_type,
+             component_usages TYPE ty_t_component_usage,
+             interface_implementings TYPE ty_wdy_inter_type,
+           END OF tty_s_component,
+
+           BEGIN OF ty_controller_content,
+             controller_content TYPE string,
+             controller_content_type TYPE string,
+           END OF ty_controller_content,
+
+           tty_controller_content TYPE STANDARD TABLE OF ty_controller_content.
+
+    TYPES: BEGIN OF tty_s_method,
+             cmpname       TYPE wdy_md_object_name, "30 char
+             description   TYPE wdy_md_description,
+             is_intf_item  TYPE wdy_boolean,
+             is_predefined TYPE wdy_boolean,
+             parameters    TYPE if_wdy_md_adt_controller=>gty_t_parameter,
+             exceptions    TYPE if_wdy_md_adt_controller=>gty_t_exception,
+           END OF tty_s_method,
+
+           tty_t_method TYPE STANDARD TABLE OF tty_s_method WITH KEY cmpname.
+
+    TYPES: BEGIN OF tty_s_event_handler,
+             cmpname       TYPE wdy_md_object_name, "30 char
+             description   TYPE wdy_md_description,
+             is_intf_item  TYPE wdy_boolean,
+             parameters    TYPE if_wdy_md_adt_controller=>gty_t_parameter,
+             event_source  TYPE wdy_controller_usage_name.
+             include       TYPE wdy_subscribed_event.
+             include       TYPE wdy_subscribed_inbound_plug.
+    TYPES: END OF tty_s_event_handler,
+
+            tty_t_event_handler type standard table of tty_s_event_handler with key cmpname.
+
+    TYPES: BEGIN OF tty_s_supply_function,
+             cmpname       TYPE wdy_md_object_name, "30 char
+             description   TYPE wdy_md_description,
+             code_body     TYPE string,
+             parameters    TYPE if_wdy_md_adt_controller=>gty_t_parameter, "not changeable!
+           END OF tty_s_supply_function,
+           tty_t_supply_function type standard table of tty_s_supply_function with key cmpname.
+
+    TYPES: BEGIN OF tty_s_controller,
+             definition          TYPE if_wdy_md_adt_controller=>gty_s_controller_definition,
+             controller_usages   TYPE if_wdy_md_adt_controller=>gty_t_controller_usage,
+             context             TYPE if_wdy_md_adt_controller=>gty_t_context_node,
+             context_mapping     TYPE if_wdy_md_adt_controller=>gty_t_context_mapping,
+             actions             TYPE if_wdy_md_adt_controller=>gty_t_action,
+             attributes          TYPE if_wdy_md_adt_controller=>gty_t_attribute,
+             events              TYPE if_wdy_md_adt_controller=>gty_t_event,
+             methods             TYPE tty_t_method,
+             event_handler       TYPE tty_t_event_handler,
+             supply_functions    TYPE tty_t_supply_function,
+           END OF tty_s_controller.
+
     " constructor
     " io_objtelemetry - class object for telemetry
     " iv_methtelemetry - method name for telemetry
+    " io_objmetadata - class object for metadata
+    " iv_methmetadata - method name for metadata
     " for telemetry, the method will be invoked with parameters iv_message as string (for message content) and iv_kind as string (for category)
+    " for metadata, the method will be invoked with parameters iv_pkg as string (for object package if any), iv_name as string (for object name) and iv_type as string (for object type) and return string as rv_metadata
     METHODS constructor
       IMPORTING
         io_objtelemetry  TYPE REF TO object OPTIONAL
-        iv_methtelemetry TYPE string OPTIONAL.
+        iv_methtelemetry TYPE string OPTIONAL
+        io_objmetadata   TYPE REF TO object OPTIONAL
+        iv_methmetadata  TYPE string OPTIONAL.
 
     " fetch TR info for a TR
     " iv_trid - TR ID
@@ -150,6 +223,7 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
     " ev_date - TR last changed date
     " ev_time - TR last changed time
     " ev_custtr - customizing TR or not
+    " ev_ossnote - OSS note or not
     " it_commit_objects - table of ABAP objects to commit to Git including name, type, file content, add/update/delete status
     METHODS get_tr_commit_objects
       IMPORTING
@@ -169,6 +243,7 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
                 ev_date           TYPE d
                 ev_time           TYPE t
                 ev_custtr         TYPE abap_bool
+                ev_ossnote        TYPE abap_bool
       CHANGING
                 it_commit_objects TYPE tty_commit_object
       RETURNING VALUE(rv_success) TYPE abap_bool.
@@ -486,15 +561,36 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
       EXPORTING
         et_packages TYPE tty_package.
 
+    methods BUILD_WDYD_JSON
+    importing
+      !IV_OBJNAME type VERSOBJNAM
+      !IV_VERSION type VERSNO
+    exporting
+      !EV_FILECONTENT type STRING
+      !et_filecontent type tty_abaptext
+    returning
+      value(RV_SUCCESS) type ABAP_BOOL.
+
+    METHODS build_wdyc_json
+    IMPORTING
+      !iv_controllername TYPE string
+      !iv_componentname TYPE string
+      !iv_version TYPE versno
+      !iv_mode TYPE string
+    EXPORTING
+      !et_filecontent TYPE tty_controller_content
+    RETURNING
+      VALUE(rv_success) TYPE abap_bool.
+
   PROTECTED SECTION.
 
   PRIVATE SECTION.
 
-    CONSTANTS c_en TYPE spras VALUE 'E'.
-    CONSTANTS c_custtrfunc TYPE string VALUE 'W'.
-    CONSTANTS c_wkbtrfunc TYPE string VALUE 'K'.
-    CONSTANTS c_toctrfunc TYPE string VALUE 'T'.
-    CONSTANTS c_relests TYPE string VALUE 'R'.
+    CONSTANTS c_en TYPE spras VALUE 'E' ##NO_TEXT.
+    CONSTANTS c_custtrfunc TYPE string VALUE 'W' ##NO_TEXT.
+    CONSTANTS c_wkbtrfunc TYPE string VALUE 'K' ##NO_TEXT.
+    CONSTANTS c_toctrfunc TYPE string VALUE 'T' ##NO_TEXT.
+    CONSTANTS c_relests TYPE string VALUE 'R' ##NO_TEXT.
 
     " structure for data table description
     TYPES: BEGIN OF ty_dd02v,
@@ -715,6 +811,10 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
     " telemetry callback
     DATA oref_telemetry TYPE REF TO object.
     DATA method_name_telemetry TYPE string.
+
+    " metadata callback
+    DATA oref_metadata TYPE REF TO object.
+    DATA method_name_metadata TYPE string.
 
     " find all hierarchical parent packages of a package
     METHODS get_parentpackages
@@ -1108,7 +1208,15 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
         !IT_COMMIT_OBJECTS TYPE TTY_COMMIT_OBJECT
         !IT_BRFAPP_PROCESSED type TTY_BRF_APP OPTIONAL.
 
-        " wrapper to write telemetry with the callback registered
+    " wrapper to get metadata
+    METHODS get_metadata
+      IMPORTING
+        iv_pkg     TYPE string
+        iv_name    TYPE string
+        iv_type    TYPE string
+      RETURNING VALUE(rv_metadata) TYPE string.
+
+    " wrapper to write telemetry with the callback registered
     METHODS write_telemetry
       IMPORTING
         iv_message TYPE string
@@ -2355,6 +2463,95 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD build_wdyd_json.
+  TRY.
+      DATA lv_component TYPE REF TO if_wdy_md_adt_component.
+          lv_component = cl_wdy_md_adt_component=>get_instance_by_version(
+        EXPORTING component_name = iv_objname
+            version_number = iv_version
+        ).
+
+    DATA lv_com_data TYPE if_wdy_md_adt_component=>gty_s_component.
+    lv_component->load_component( IMPORTING component_data = lv_com_data ).
+
+    DATA lv_com_data_fields TYPE tty_s_component.
+    MOVE-CORRESPONDING lv_com_data TO lv_com_data_fields EXPANDING NESTED TABLES.
+
+    DATA lo_parse TYPE REF TO /ui2/cl_json.
+    CREATE OBJECT lo_parse.
+    DATA lv_json TYPE string.
+    lo_parse->serialize(
+       EXPORTING
+         data        = lv_com_data_fields "Data to serialize
+       RECEIVING
+         r_json      = lv_json ).
+    lv_json = get_formatted_json_string( lv_json ).
+    ev_filecontent = lv_json.
+    SPLIT ev_filecontent AT cl_abap_char_utilities=>newline INTO TABLE et_filecontent.
+    rv_success = abap_true.
+  CATCH cx_wdy_md_not_existing.
+    rv_success = abap_false.
+  ENDTRY.
+  ENDMETHOD.
+
+  METHOD build_wdyc_json.
+  TRY.
+    DATA lv_controller_instance TYPE REF TO if_wdy_md_adt_controller.
+    DATA lv_version TYPE vrsd-versno.
+    DATA lv_cont_data TYPE IF_WDY_MD_ADT_CONTROLLER=>gty_s_controller.
+    DATA lv_cont_data_simple TYPE tty_s_controller.
+    DATA lo_parse TYPE REF TO /ui2/cl_json.
+    DATA lv_json TYPE string.
+    DATA lt_filecontent TYPE tty_controller_content.
+
+    lv_version = iv_version.
+    IF iv_mode EQ 'active'.
+        lv_controller_instance = zcl_utility_abaptogit_wdy=>get_instance_by_key(
+        EXPORTING component_name = iv_componentname
+            controller_name = iv_controllername
+            version = 'A'
+    ).
+    ELSE.
+        lv_controller_instance = zcl_utility_abaptogit_wdy=>get_instance_by_version(
+        EXPORTING component_name = iv_componentname
+            version_number = lv_version
+            controller_name = iv_controllername
+    ).
+    ENDIF.
+    lv_controller_instance->load_controller( IMPORTING controller_data = lv_cont_data ).
+    MOVE-CORRESPONDING lv_cont_data to lv_cont_data_simple EXPANDING NESTED TABLES.
+    CREATE OBJECT lo_parse.
+    lo_parse->serialize(
+       EXPORTING
+         data        = lv_cont_data_simple "Data to serialize
+       RECEIVING
+         r_json      = lv_json ).
+
+    lv_json = get_formatted_json_string( lv_json ).
+    APPEND VALUE #( controller_content = lv_json controller_content_type = 'controller' ) TO lt_filecontent.
+    DATA lv_controller_def_code TYPE rswsourcet.
+    DATA lv_controller_imp_code TYPE rswsourcet.
+
+    lv_controller_instance->load_source(
+    IMPORTING definition_part = lv_controller_def_code
+        implementation_part = lv_controller_imp_code
+    ).
+
+    CONCATENATE LINES OF lv_controller_def_code INTO DATA(lv_controller_def_string) SEPARATED BY cl_abap_char_utilities=>newline.
+    CONCATENATE LINES OF lv_controller_imp_code INTO DATA(lv_controller_imp_string) SEPARATED BY cl_abap_char_utilities=>newline.
+    CONCATENATE lv_controller_def_string cl_abap_char_utilities=>newline lv_controller_imp_string INTO data(lv_controller_source).
+    APPEND VALUE #( controller_content = lv_controller_source controller_content_type = 'source' ) TO lt_filecontent.
+    et_filecontent = lt_filecontent.
+    rv_success = abap_true.
+  CATCH cx_wdy_md_not_existing.
+      rv_success = abap_false.
+  CATCH cx_wdy_md_adt_exception.
+      rv_success = abap_false.
+  CATCH cx_root.
+      rv_success = abap_false.
+  ENDTRY.
+  ENDMETHOD.
+
   METHOD constructor.
 
     IF io_objtelemetry IS SUPPLIED.
@@ -2363,6 +2560,14 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     IF iv_methtelemetry IS SUPPLIED.
       me->method_name_telemetry = iv_methtelemetry.
+    ENDIF.
+
+    IF io_objmetadata IS SUPPLIED.
+      me->oref_metadata = io_objmetadata.
+    ENDIF.
+
+    IF iv_methmetadata IS SUPPLIED.
+      me->method_name_metadata = iv_methmetadata.
     ENDIF.
 
   ENDMETHOD.
@@ -2828,7 +3033,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
               APPEND LINES OF wa_enh_meth-source TO abaptext.
             ENDLOOP.
             rv_success = abap_true.
-          CATCH cx_enh_no_valid_input_type .
+          CATCH cx_enh_no_valid_input_type.
             RETURN.
         ENDTRY.
       WHEN 'FUGRENH'.
@@ -2839,7 +3044,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
               IMPORTING
                 data    = l_fugr_data.
             " TODO function group case
-          CATCH cx_enh_no_valid_input_type .
+          CATCH cx_enh_no_valid_input_type.
             RETURN.
         ENDTRY.
       WHEN 'BADI_IMPL'.
@@ -2860,7 +3065,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             ENDLOOP.
             APPEND '' TO abaptext.
             rv_success = abap_true.
-          CATCH cx_enh_no_valid_input_type .
+          CATCH cx_enh_no_valid_input_type.
             RETURN.
         ENDTRY.
       WHEN OTHERS.
@@ -3305,7 +3510,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     ASSIGN lr_data->* TO <fs_table>.
 
     " dynamic query for given table name
-    SELECT * FROM (lv_tabname) INTO CORRESPONDING FIELDS OF TABLE <fs_table> UP TO iv_maxrow ROWS .
+    SELECT * FROM (lv_tabname) INTO CORRESPONDING FIELDS OF TABLE <fs_table> UP TO iv_maxrow ROWS.
 
     IF iv_tsv = abap_true.
       LOOP AT <fs_table> ASSIGNING FIELD-SYMBOL(<fs_row1>).
@@ -4667,6 +4872,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
   METHOD get_tr_commit_objects.
 
     DATA ld_cs_request TYPE trwbo_request.
+    DATA ld_cs_request_task TYPE trwbo_request.
     DATA lv_trkorr TYPE trkorr.
     DATA lv_tasktrkorr TYPE trkorr.
     DATA lt_objects TYPE trwbo_t_e071.
@@ -4684,11 +4890,15 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lt_fginccodes TYPE TABLE OF string.
     DATA lv_objname2 TYPE string.
     DATA lv_objtype2 TYPE string.
+    DATA lv_objnamem TYPE string.
+    DATA lv_objtypem TYPE string.
+    DATA lv_metadata TYPE string.
     DATA lv_devclass TYPE string.
     DATA ls_tadir TYPE tadir.
     DATA lv_progname TYPE string.
     DATA lv_fugr TYPE string.
     DATA lv_filecontent TYPE string.
+    DATA lv_filelines TYPE i.
     DATA lv_tclsname TYPE string.
     DATA lv_tclstype TYPE string.
     DATA lv_tclsfilecontent TYPE string.
@@ -4806,7 +5016,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
       LOOP AT lt_tasks INTO DATA(watrkorr).
         lv_tasktrkorr = watrkorr.
-        CLEAR ld_cs_request.
+        CLEAR ld_cs_request_task.
         CALL FUNCTION 'TR_READ_REQUEST'
           EXPORTING
             iv_read_e070       = abap_true
@@ -4817,7 +5027,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             iv_read_attributes = abap_true
             iv_trkorr          = lv_tasktrkorr
           CHANGING
-            cs_request         = ld_cs_request
+            cs_request         = ld_cs_request_task
           EXCEPTIONS
             error_occured      = 1
             no_authorization   = 2.
@@ -4827,16 +5037,16 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           RETURN.
         ENDIF.
         " object may duplicate among tasks
-        LOOP AT ld_cs_request-objects ASSIGNING <fs_cs_request_object>.
+        LOOP AT ld_cs_request_task-objects ASSIGNING <fs_cs_request_object>.
           IF NOT line_exists( lt_objects[ obj_name = <fs_cs_request_object>-obj_name ] ) OR <fs_cs_request_object>-obj_name+0(3) EQ 'FDT'.
             APPEND <fs_cs_request_object> TO lt_objects.
             " BRF plus case for BRF, obj_name is same, all as "FDT0000"
             IF <fs_cs_request_object>-obj_name+0(3) = 'FDT'.
-              APPEND ld_cs_request TO lt_cs_request.
+              APPEND ld_cs_request_task TO lt_cs_request.
             ENDIF.
           ENDIF.
         ENDLOOP.
-    ENDLOOP.
+      ENDLOOP.
 
     ELSE.
 
@@ -4851,6 +5061,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             APPEND ld_cs_request TO lt_cs_request.
           ENDIF.
       ENDLOOP.
+
     ENDIF.
 
     " append all tasks' description to the commit description
@@ -4879,10 +5090,22 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       DATA(lv_objname) = <fs_cs_request_object>-obj_name.
       DATA(lv_objtype) = <fs_cs_request_object>-object.
 
-      APPEND |object { lv_objname }, type { lv_objtype }| TO lt_trobjcontent.
+      IF lv_objtype = 'NOTE'.
+        ev_ossnote = abap_true.
+      ENDIF.
+
+      lv_objnamem = lv_objname.
+      lv_objtypem = lv_objtype.
+      lv_metadata = me->get_metadata(
+        EXPORTING
+          iv_pkg = ''
+          iv_name = lv_objnamem
+          iv_type = lv_objtypem
+           ).
+      APPEND |object { lv_objname }, type { lv_objtype }{ lv_metadata }| TO lt_trobjcontent.
 
       LOOP AT ld_cs_request-keys ASSIGNING <fs_cs_request_key> WHERE mastertype = lv_objtype AND mastername = lv_objname.
-        APPEND |    object { <fs_cs_request_key>-object }, name { <fs_cs_request_key>-objname }, key { <fs_cs_request_key>-tabkey }| TO lt_trobjcontent.
+        APPEND |    object { <fs_cs_request_key>-object }, name { <fs_cs_request_key>-objname }, key { <fs_cs_request_key>-tabkey }{ lv_metadata }| TO lt_trobjcontent.
       ENDLOOP.
 
       " table config change object
@@ -4921,6 +5144,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             CHANGING
                 it_commit_objects = it_commit_objects
                  ).
+
         CONTINUE.
 
       ENDIF.
@@ -4968,6 +5192,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           " align with GUI_DOWNLOAD which adds a blank line
           lv_filecontent = lv_filecontent && cl_abap_char_utilities=>cr_lf.
 
+          lv_filelines = lines( lt_filecontent ).
+          lt_trobjcontent[ lines( lt_trobjcontent ) ] = lt_trobjcontent[ lines( lt_trobjcontent ) ]-line && |, lines { lv_filelines }|.
+
           TRANSLATE lv_objname TO UPPER CASE.
 
           APPEND VALUE ts_commit_object(
@@ -5002,7 +5229,9 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             CHANGING
                 it_commit_objects = it_commit_objects
             ).
+
         CONTINUE.
+
       ENDIF.
 
       CLEAR: lv_objtype2, lv_devclass.
@@ -5333,6 +5562,113 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
         ENDIF.
 
         CONTINUE.
+      ELSEIF lv_objtype = 'WDYD' OR lv_objtype = 'WDYN'.
+        clear: lt_objversions,lv_version_no.
+
+        SELECT SINGLE devclass INTO lv_devclass FROM tadir
+            WHERE object = 'WDYN' AND obj_name = lv_objname. "#EC WARNOK "#EC CI_SGLSELECT
+
+        "web dynpro
+         lv_success = me->get_versions_no(
+          EXPORTING
+              iv_objname = lv_objname
+              iv_objtype = lv_objtype
+              iv_mode = iv_mode
+              iv_findtest = abap_true
+          IMPORTING
+              ev_version_no = lv_version_no
+          CHANGING
+              cht_objversions = lt_objversions
+              ).
+         CHECK lv_success = abap_true.
+
+         lv_success = me->build_wdyd_json(
+          EXPORTING
+              iv_version = lt_objversions[ 1 ]-objversionno
+              iv_objname = lt_objversions[ 1 ]-objname
+          IMPORTING
+              ev_filecontent = lv_filecontent
+              ).
+        CHECK lv_success = abap_true.
+
+        IF line_exists( it_commit_objects[ devclass = lv_devclass objname = lv_objname objtype = lv_objtype objtype2 = lv_objtype ] ).
+          CONTINUE.
+        ENDIF.
+
+        APPEND VALUE ts_commit_object(
+         devclass = lv_devclass
+         objname = lv_objname
+         objtype = lv_objtype
+         objtype2 = lv_objtype
+         fugr = ''
+         progcls = 'full'
+         delflag = abap_false
+         verno = lv_version_no
+         filecontent = lv_filecontent
+          ) TO it_commit_objects.
+        CONTINUE.
+      ELSEIF lv_objtype = 'WDYC'.
+        clear: lt_objversions,lv_version_no.
+
+        "web dynpro
+         lv_success = me->get_versions_no(
+          EXPORTING
+              iv_objname = lv_objname
+              iv_objtype = lv_objtype
+              iv_mode = iv_mode
+              iv_findtest = abap_true
+          IMPORTING
+              ev_version_no = lv_version_no
+          CHANGING
+              cht_objversions = lt_objversions
+              ).
+         CHECK lv_success = abap_true.
+
+         DATA lt_wdyc_content type tty_controller_content.
+         data lv_objectname type string.
+         data lv_len type i.
+         data lv_controller_name type string.
+         data lv_component_name type string.
+
+         lv_objectname = lt_objversions[ 1 ]-objname.
+         lv_len = STRLEN( lv_objectname ) - 30.
+         lv_controller_name = lv_objectname+30(lv_len).
+         lv_component_name = lv_objectname(30).
+         CONDENSE lv_component_name.
+
+         SELECT SINGLE devclass INTO lv_devclass FROM tadir
+            WHERE object = 'WDYN' AND obj_name = lv_component_name. "#EC WARNOK "#EC CI_SGLSELECT
+
+         lv_success = me->build_wdyc_json(
+          EXPORTING
+              iv_version = lt_objversions[ 1 ]-objversionno
+              iv_controllername = lv_controller_name
+              iv_componentname = lv_component_name
+              iv_mode = iv_mode
+          IMPORTING
+              et_filecontent = lt_wdyc_content
+              ).
+
+        CHECK lv_success = abap_true.
+        lv_objname = |{ lv_component_name }_{ lv_controller_name }|.
+        loop at lt_wdyc_content into data(lv_wdyc_content).
+         IF line_exists( it_commit_objects[ devclass = lv_devclass objname = lv_objname fugr = lv_component_name objtype = lv_objtype objtype2 = lv_wdyc_content-controller_content_type ] ).
+          CONTINUE.
+         ENDIF.
+         lv_filecontent = lv_wdyc_content-controller_content.
+        APPEND VALUE ts_commit_object(
+         devclass = lv_devclass
+         objname = lv_objname
+         objtype = lv_objtype
+         objtype2 = lv_wdyc_content-controller_content_type
+         fugr = lv_component_name
+         progcls = 'full'
+         delflag = abap_false
+         verno = lv_version_no
+         filecontent = lv_filecontent
+          ) TO it_commit_objects.
+        endloop.
+
 
       ELSEIF line_exists( it_excl_objs[ table_line = lv_objtype ] ).
 
@@ -5661,6 +5997,20 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
           date = lv_verdate
           time = lv_vertime
           ) TO it_commit_objects.
+
+      lv_objnamem = lv_objname.
+      lv_objtypem = lv_objtype.
+      lv_metadata = me->get_metadata(
+        EXPORTING
+          iv_pkg = lv_devclass
+          iv_name = lv_objnamem
+          iv_type = lv_objtypem
+           ).
+
+      lt_trobjcontent[ lines( lt_trobjcontent ) ] = lt_trobjcontent[ lines( lt_trobjcontent ) ]-line && |{ lv_metadata }|.
+
+      lv_filelines = lines( lt_filecontent ).
+      lt_trobjcontent[ lines( lt_trobjcontent ) ] = lt_trobjcontent[ lines( lt_trobjcontent ) ]-line && |, LOC { lv_filelines }, package { lv_devclass }|.
 
     ENDLOOP.
 
@@ -6496,6 +6846,15 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     ELSEIF iv_objtype = 'MSAD'.
       " program/include case
       lv_objtype = 'MSAD'.
+    ELSEIF iv_objtype = 'WDYN'.
+      " web dynpro component
+      lv_objtype = 'WDYD'.
+    ELSEIF iv_objtype = 'WDYD'.
+      " web dynpro definition
+      lv_objtype = 'WDYD'.
+    ELSEIF iv_objtype = 'WDYC'.
+      " web dynpro controller
+      lv_objtype = 'WDYC'.
     ELSE.
       rv_success = abap_false.
       ev_version_no = 0.
@@ -6741,6 +7100,23 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
 
     rv_success = abap_true.
 
+  ENDMETHOD.
+
+
+  METHOD get_metadata.
+    IF me->oref_metadata IS NOT INITIAL AND me->method_name_metadata IS NOT INITIAL.
+      DATA(oref) = me->oref_metadata.
+      DATA(meth) = me->method_name_metadata.
+      CALL METHOD oref->(meth)
+        EXPORTING
+          iv_pkg = iv_pkg
+          iv_name = iv_name
+          iv_type = iv_type
+        RECEIVING
+          rv_metadata = rv_metadata.
+    ELSE.
+      rv_metadata = ''.
+    ENDIF.
   ENDMETHOD.
 
 

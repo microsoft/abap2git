@@ -844,7 +844,38 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
           rv_name = |Source Code Library{ c_delimgit }{ lv_type }{ c_delimgit }{ lv_objname }.{ iv_commit_object-objtype }.abap|.
         ENDIF.
       ENDIF.
+    ELSEIF iv_commit_object-objtype = 'WDYC'.
+      " object in function group named as <function group name>.fugr.<object name>.abap, following abapGit
+      DATA lv_objectfile_suffix type string value '.txt'.
+      IF iv_commit_object-objtype2 = 'controller'.
+        lv_objectfile_suffix = '.wdyc.json'.
+      ELSEIF iv_commit_object-objtype2 = 'source'.
+        lv_objectfile_suffix = '.wdyc.abap'.
+      ENDIF.
+      IF iv_folder_structure = c_folder_structure_flat.
+        rv_name = |{ lv_objname }{ lv_objectfile_suffix }|.
+      ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+          " include case
+          IF iv_local_folder = abap_true.
+            ev_file_folder = |{ iv_base_folder }Web Dynpro{ c_delim }Web Dynpro Components{ c_delim }{ lv_fugr }|.
+            rv_name = |Web Dynpro{ c_delim }Web Dynpro Components{ c_delim }{ lv_fugr }{ c_delim }{ lv_objname }{ lv_objectfile_suffix }|.
+          ELSE.
+            rv_name = |Web Dynpro{ c_delimgit }Web Dynpro Components{ c_delimgit }{ lv_fugr }{ c_delimgit }{ lv_objname }{ lv_objectfile_suffix }|.
+          ENDIF.
+      ENDIF.
+    ELSEIF iv_commit_object-objtype = 'WDYD' OR iv_commit_object-objtype = 'WDYN'.
 
+     IF iv_folder_structure = c_folder_structure_flat.
+        rv_name = |{ lv_objname }.wdyd.json|.
+      ELSEIF iv_folder_structure = c_folder_structure_eclipse.
+          " include case
+          IF iv_local_folder = abap_true.
+            ev_file_folder = |{ iv_base_folder }Web Dynpro{ c_delim }Web Dynpro Components{ c_delim }{ lv_fugr }|.
+            rv_name = |Web Dynpro{ c_delim }Web Dynpro Components{ c_delim }{ lv_objname }{ c_delim }{ lv_objname }.wdyd.json|.
+          ELSE.
+            rv_name = |Web Dynpro{ c_delimgit }Web Dynpro Components{ c_delimgit }{ lv_objname }{ c_delimgit }{ lv_objname }.wdyd.json|.
+          ENDIF.
+      ENDIF.
     ELSE.
 
       " config change named as <table name>.<full|delta>.txt
