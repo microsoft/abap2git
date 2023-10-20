@@ -32,6 +32,8 @@ CLASS zcl_utility_abaptogit DEFINITION
 
   PUBLIC SECTION.
 
+    CONSTANTS c_delim TYPE string VALUE '\'.
+
     " list of TR IDs
     TYPES: tty_trids TYPE TABLE OF string.
 
@@ -50,20 +52,37 @@ CLASS zcl_utility_abaptogit DEFINITION
            END OF ty_obj_update.
     TYPES: tty_obj_updates TYPE TABLE OF ty_obj_update WITH KEY path.
 
+    " code object used in downloading ABAP code object to local disk
+    TYPES: BEGIN OF ts_code_object,
+             obj_name  TYPE sobj_name,
+             obj_type  TYPE trobjtype,
+             obj_type2 TYPE trobjtype,
+             fugr_name TYPE sobj_name,
+             devclass  TYPE devclass,
+           END OF ts_code_object.
+
     " constructor
+    " it_configrfcs - RFC connections for config table diff
     " io_objtelemetry - class object for telemetry
     " iv_methtelemetry - method name for telemetry
     " io_objmetadata - class object for metadata
     " iv_methmetadata - method name for metadata
+    " io_objpcrsch - class object for PCR/schema
+    " iv_methpcrschall - method name for PCR/schema enumeration
+    " iv_methpcrschcnt - method name for PCR/schema content
     " for telemetry, the method will be invoked with parameters
     " iv_message as string (for message content) and iv_kind as string (for category)
     " for metadata, the method will be invoked with parameters iv_pkg as string (for object package if any), iv_name as string (for object name) and iv_type as string (for object type) and return string as rv_metadata
     METHODS constructor
       IMPORTING
+        it_configrfcs    TYPE zcl_utility_abaptogit_tr=>tty_rfcconnection OPTIONAL
         io_objtelemetry  TYPE REF TO object OPTIONAL
         iv_methtelemetry TYPE string OPTIONAL
         io_objmetadata   TYPE REF TO object OPTIONAL
-        iv_methmetadata  TYPE string OPTIONAL.
+        iv_methmetadata  TYPE string OPTIONAL
+        io_objpcrsch     TYPE REF TO object OPTIONAL
+        iv_methpcrschall TYPE string OPTIONAL
+        iv_methpcrschcnt TYPE string OPTIONAL.
 
     " fetch HR/payroll schema/PCR language code lines into files
     " iv_folder - local folder name to save the files
@@ -244,6 +263,7 @@ CLASS zcl_utility_abaptogit DEFINITION
     " iv_curuser - use current user as Git commit author
     " it_excl_objs - exclusion list for object type
     " it_excl_tbls - exclusion list for configuration table names
+    " it_rfcconnection - RFC connections for config table
     " ev_title - title of the TR
     " ev_newprurl - URL of PR creation
     METHODS create_pullrequest
@@ -258,6 +278,7 @@ CLASS zcl_utility_abaptogit DEFINITION
                 iv_curuser        TYPE abap_bool DEFAULT 'X'
                 it_excl_objs      TYPE zcl_utility_abaptogit_tr=>tty_excl_list OPTIONAL
                 it_excl_tbls      TYPE zcl_utility_abaptogit_tr=>tty_excl_list OPTIONAL
+                it_rfcconnection  TYPE zcl_utility_abaptogit_tr=>tty_rfcconnection OPTIONAL
       EXPORTING
                 ev_title          TYPE string
                 ev_newprurl       TYPE string
@@ -272,6 +293,7 @@ CLASS zcl_utility_abaptogit DEFINITION
     " iv_curuser - use current user as commit author
     " it_excl_objs - exclusion list for object type
     " it_excl_tbls - exclusion list for configuration table names
+    " it_rfcconnection - RFC connections for config table
     METHODS revise_pullrequest
       IMPORTING
                 iv_packagenames   TYPE string
@@ -282,6 +304,7 @@ CLASS zcl_utility_abaptogit DEFINITION
                 iv_curuser        TYPE abap_bool DEFAULT 'X'
                 it_excl_objs      TYPE zcl_utility_abaptogit_tr=>tty_excl_list OPTIONAL
                 it_excl_tbls      TYPE zcl_utility_abaptogit_tr=>tty_excl_list OPTIONAL
+                it_rfcconnection  TYPE zcl_utility_abaptogit_tr=>tty_rfcconnection OPTIONAL
       RETURNING VALUE(rv_success) TYPE abap_bool.
 
     " get active or latest completed pull request for the TR
@@ -341,7 +364,6 @@ CLASS zcl_utility_abaptogit DEFINITION
 
   PRIVATE SECTION.
 
-    CONSTANTS c_delim TYPE string VALUE '\'.
     CONSTANTS c_custtrfunc TYPE string VALUE 'W'.
     CONSTANTS c_wkbtrfunc TYPE string VALUE 'K'.
     CONSTANTS c_toctrfunc TYPE string VALUE 'T'.
@@ -349,15 +371,6 @@ CLASS zcl_utility_abaptogit DEFINITION
 
     " max difference in seconds for an imported TR to date time of now
     CONSTANTS c_importtr_diff_gap TYPE i VALUE 30.
-
-    " code object used in downloading ABAP code object to local disk
-    TYPES: BEGIN OF ts_code_object,
-             obj_name  TYPE sobj_name,
-             obj_type  TYPE trobjtype,
-             obj_type2 TYPE trobjtype,
-             fugr_name TYPE sobj_name,
-             devclass  TYPE devclass,
-           END OF ts_code_object.
 
     TYPES: BEGIN OF ts_code_object_wydc,
              obj_name  TYPE e071-obj_name,
@@ -374,6 +387,10 @@ CLASS zcl_utility_abaptogit DEFINITION
     " telemetry callback
     DATA oref_telemetry TYPE REF TO object.
     DATA method_name_telemetry TYPE string.
+
+    " PCR/schema callback
+    DATA oref_pcrsch TYPE REF TO object.
+    DATA method_name_pcrschall TYPE string.
 
     " save content to local disk file
     METHODS save_file
@@ -571,10 +588,13 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
     CREATE OBJECT me->oref_tr
       EXPORTING
+        it_configrfcs = it_configrfcs
         io_objtelemetry  = io_objtelemetry
         iv_methtelemetry = iv_methtelemetry
         io_objmetadata = io_objmetadata
-        iv_methmetadata = iv_methmetadata.
+        iv_methmetadata = iv_methmetadata
+        io_objpcrsch = io_objpcrsch
+        iv_methpcrschcnt = iv_methpcrschcnt.
 
     IF io_objtelemetry IS SUPPLIED.
       me->oref_telemetry = io_objtelemetry.
@@ -582,6 +602,22 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
     IF iv_methtelemetry IS SUPPLIED.
       me->method_name_telemetry = iv_methtelemetry.
+    ENDIF.
+
+    IF io_objtelemetry IS SUPPLIED.
+      me->oref_telemetry = io_objtelemetry.
+    ENDIF.
+
+    IF iv_methtelemetry IS SUPPLIED.
+      me->method_name_telemetry = iv_methtelemetry.
+    ENDIF.
+
+    IF io_objpcrsch IS SUPPLIED.
+      me->oref_pcrsch = io_objpcrsch.
+    ENDIF.
+
+    IF iv_methpcrschall IS SUPPLIED.
+      me->method_name_pcrschall = iv_methpcrschall.
     ENDIF.
 
   ENDMETHOD.
@@ -612,6 +648,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             iv_mode = zcl_utility_abaptogit_tr=>c_active_version
             it_excl_objs = it_excl_objs
             it_excl_tbls = it_excl_tbls
+            it_rfcconnection = it_rfcconnection
         IMPORTING
             ev_owner = lv_owner
             ev_comment = lv_comment
@@ -755,160 +792,18 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
 
 
   METHOD get_hr_schemapcrs.
-    DATA wacode TYPE ts_code_object.
-    DATA lt_schemas TYPE STANDARD TABLE OF ts_code_object.
-    DATA lt_pcrs TYPE STANDARD TABLE OF ts_code_object.
-    DATA lt_filecontent TYPE zcl_utility_abaptogit_tr=>tty_abaptext.
-    DATA lv_basefolder TYPE string.
-    DATA lv_commit_object TYPE zcl_utility_abaptogit_tr=>ts_commit_object.
-    DATA lv_code_name TYPE string.
-    DATA lv_path TYPE string.
-    DATA lv_folder TYPE rlgrap-filename.
-    DATA lv_codefolder TYPE string.
-    DATA lv_filefolder TYPE string.
-    DATA lt_filefolders TYPE TABLE OF string WITH DEFAULT KEY.
-    DATA lv_success TYPE abap_bool.
-    DATA lv_schpcrname TYPE string.
-    DATA lv_progcls TYPE t52ba-pwert.
-
-    IF iv_folder NP '*\'.
-      lv_basefolder = iv_folder && '\'.
+    IF me->oref_pcrsch IS NOT INITIAL.
+      DATA(oref) = me->oref_pcrsch.
+      DATA(meth) = me->method_name_pcrschall.
+      CALL METHOD oref->(meth)
+        EXPORTING
+          iv_folder = iv_folder
+          iv_folder_structure = iv_folder_structure
+        RECEIVING
+          rv_success = rv_success.
     ELSE.
-      lv_basefolder = iv_folder.
-    ENDIF.
-
-    " root folder for a package like \src\.schemapcr\
-    lv_folder = |{ lv_basefolder }{ zcl_utility_abaptogit_tr=>c_schemapcr }{ c_delim }|.
-    lv_codefolder = lv_folder.
-    CALL FUNCTION 'GUI_CREATE_DIRECTORY'
-      EXPORTING
-        dirname = lv_folder
-      EXCEPTIONS
-        failed  = 1
-        OTHERS = 2.
-    IF sy-subrc <> 0.
-      me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS creates existing folder { lv_folder }| ).
-    ENDIF.
-
-    " download schemas
-    SELECT sname, 'PSCC', 'PSCC', ' ' INTO TABLE @lt_schemas FROM t52cc WHERE sname LIKE 'Z%' OR sname LIKE 'Y%'.
-
-    LOOP AT lt_schemas INTO wacode.
-
-      CLEAR lt_filecontent.
-
-      lv_schpcrname = wacode-obj_name.
-      me->oref_tr->build_schema_content_active(
-          EXPORTING
-              iv_schemaname = lv_schpcrname
-          IMPORTING
-              et_filecontent = lt_filecontent
-               ).
-      SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'SCHE' AND ponam = @lv_schpcrname AND pattr = 'PCL'. "#EC WARNOK
-
-      lv_commit_object-objname = wacode-obj_name.
-      lv_commit_object-objtype = 'PSCC'.
-      lv_commit_object-progcls = lv_progcls.
-      lv_code_name = zcl_utility_abaptogit_ado=>build_code_name(
-          EXPORTING
-              iv_commit_object = lv_commit_object
-              iv_local_folder = abap_true
-              iv_base_folder = lv_codefolder
-              iv_folder_structure = iv_folder_structure
-          IMPORTING
-              ev_file_folder = lv_filefolder
-               ).
-      IF NOT line_exists( lt_filefolders[ table_line = lv_filefolder ] ).
-        APPEND lv_filefolder TO lt_filefolders.
-        lv_folder = lv_filefolder.
-        CALL FUNCTION 'GUI_CREATE_DIRECTORY'
-          EXPORTING
-            dirname = lv_folder
-          EXCEPTIONS
-            failed = 1
-            OTHERS  = 2. "#EC FB_RC
-        IF sy-subrc <> 0.
-          me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS creates existing folder { lv_folder }| ).
-        ENDIF.
-      ENDIF.
-      lv_path = |{ lv_basefolder }{ zcl_utility_abaptogit_tr=>c_schemapcr }{ c_delim }{ lv_code_name }|.
-      CALL FUNCTION 'GUI_DOWNLOAD'
-        EXPORTING
-          filename              = lv_path
-          filetype              = 'ASC'
-          write_field_separator = 'X'
-        TABLES
-          data_tab              = lt_filecontent
-        EXCEPTIONS
-          OTHERS                = 1.
-      IF sy-subrc <> 0.
-        me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS fails to save local file { lv_path }| ).
         rv_success = abap_false.
-      ENDIF.
-
-    ENDLOOP.
-
-    CLEAR: lt_schemas, lt_filecontent.
-
-    " download PCRs
-    SELECT cname, 'PCYC', 'PCYC', ' ' INTO TABLE @lt_pcrs FROM t52ce WHERE cname LIKE 'Z%' OR cname LIKE 'Y%'.
-
-    LOOP AT lt_pcrs INTO wacode.
-
-      CLEAR lt_filecontent.
-
-      lv_schpcrname = wacode-obj_name.
-      me->oref_tr->build_pcr_content_active(
-          EXPORTING
-              iv_pcrname = lv_schpcrname
-          IMPORTING
-              et_filecontent = lt_filecontent
-               ).
-      SELECT SINGLE pwert FROM t52ba INTO @lv_progcls WHERE potyp = 'CYCL' AND ponam = @lv_schpcrname AND pattr = 'PCL'. "#EC WARNOK
-
-      lv_commit_object-objname = wacode-obj_name.
-      lv_commit_object-objtype = 'PCYC'.
-      lv_commit_object-progcls = lv_progcls.
-      lv_code_name = zcl_utility_abaptogit_ado=>build_code_name(
-          EXPORTING
-              iv_commit_object = lv_commit_object
-              iv_local_folder = abap_true
-              iv_base_folder = lv_codefolder
-              iv_folder_structure = iv_folder_structure
-          IMPORTING
-              ev_file_folder = lv_filefolder
-               ).
-      IF NOT line_exists( lt_filefolders[ table_line = lv_filefolder ] ).
-        APPEND lv_filefolder TO lt_filefolders.
-        lv_folder = lv_filefolder.
-        CALL FUNCTION 'GUI_CREATE_DIRECTORY'
-          EXPORTING
-            dirname = lv_folder
-          EXCEPTIONS
-            failed = 1
-            OTHERS  = 2. "#EC FB_RC
-        IF sy-subrc <> 0.
-          me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS creates existing folder { lv_folder }| ).
-        ENDIF.
-      ENDIF.
-      lv_path = |{ lv_basefolder }{ zcl_utility_abaptogit_tr=>c_schemapcr }{ c_delim }{ lv_code_name }|.
-
-      CALL FUNCTION 'GUI_DOWNLOAD'
-        EXPORTING
-          filename              = lv_path
-          filetype              = 'ASC'
-          write_field_separator = 'X'
-        TABLES
-          data_tab              = lt_filecontent
-        EXCEPTIONS
-          OTHERS                = 1.
-      IF sy-subrc <> 0.
-        me->write_telemetry( iv_message = |GET_HR_SCHEMAPCRS fails to save local file { lv_path }| ).
-        rv_success = abap_false.
-      ENDIF.
-
-    ENDLOOP.
-
+    ENDIF.
   ENDMETHOD.
 
 
@@ -1988,6 +1883,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             iv_needcontent = abap_true
             it_excl_objs = it_excl_objs
             it_excl_tbls = it_excl_tbls
+            iv_metaonly = abap_true
         IMPORTING
             ev_owner = ev_owner
             ev_comment = lv_comment
@@ -2097,7 +1993,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             et_trids = lt_trids
              ).
 
-    APPEND |System,User,TR,Function,Date,Time,Objects,Insertions,Deletions,Tables,Rows| TO lt_stats.
+    APPEND |System,User,TR,Function,Date,Time,Objects,Insertions,Deletions,Tables,Rows,Title| TO lt_stats.
 
     LOOP AT lt_trids INTO DATA(wa_trid).
       IF lines( it_users ) > 0 AND NOT line_exists( it_users[ table_line = wa_trid-user ] ).
@@ -2124,7 +2020,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
       ENDLOOP.
       DATA(lv_date) = |{ wa_trid-dat+4(2) }/{ wa_trid-dat+6(2) }/{ wa_trid-dat(4) }|.
       DATA(lv_time) = |{ wa_trid-tim(2) }:{ wa_trid-tim+2(2) }:{ wa_trid-tim+4(2) }|.
-      APPEND |{ sy-sysid },{ wa_trid-user },{ wa_trid-trid },{ wa_trid-func },{ lv_date },{ lv_time },{ lv_objects },{ lv_insertions },{ lv_deletions },{ lv_tables },{ lv_rows }| TO lt_stats.
+      APPEND |{ sy-sysid },{ wa_trid-user },{ wa_trid-trid },{ wa_trid-func },{ lv_date },{ lv_time },{ lv_objects },{ lv_insertions },{ lv_deletions },{ lv_tables },{ lv_rows },"{ wa_trid-titl }"| TO lt_stats.
     ENDLOOP.
 
     CALL FUNCTION 'GUI_DOWNLOAD'
@@ -2243,6 +2139,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             iv_mode = zcl_utility_abaptogit_tr=>c_active_version
             it_excl_objs = it_excl_objs
             it_excl_tbls = it_excl_tbls
+            it_rfcconnection = it_rfcconnection
         IMPORTING
             ev_owner = lv_owner
             ev_comment = lv_comment

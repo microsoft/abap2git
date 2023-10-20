@@ -17,8 +17,14 @@ PERFORM f_heatmap.
 
 FORM f_heatmap.
     WRITE / |Start heatmap at { sy-uzeit }|.
-    DATA lo_abaptogit TYPE REF TO ZCL_UTILITY_ABAPTOGIT.
-    CREATE OBJECT lo_abaptogit.
+    DATA lo_pcrsch TYPE REF TO ZCL_HRPY_UTILITY_ABAPTOGIT_PCR.
+    DATA lo_abaptogit TYPE REF TO ZCL_HRPY_UTILITY_ABAPTOGIT.
+    CREATE OBJECT lo_pcrsch.
+    CREATE OBJECT lo_abaptogit
+        EXPORTING
+            io_objpcrsch = lo_pcrsch
+            iv_methpcrschall = 'GET_HR_SCHEMAPCRS'
+            iv_methpcrschcnt = 'BUILD_PCRSCHEMA_CONTENT'.
     DATA lv_pname TYPE string.
     lv_pname = p_pname.
     lo_abaptogit->heatmap_trs(
