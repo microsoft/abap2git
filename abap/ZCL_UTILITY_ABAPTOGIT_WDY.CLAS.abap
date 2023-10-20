@@ -1,4 +1,4 @@
-CLASS zcl_hrpy_utility_abaptogit_wdy DEFINITION
+CLASS zcl_utility_abaptogit_wdy DEFINITION
   PUBLIC
   FINAL
   CREATE PRIVATE
@@ -291,7 +291,7 @@ ENDCLASS.
 
 
 
-CLASS zcl_hrpy_utility_abaptogit_wdy IMPLEMENTATION.
+CLASS zcl_utility_abaptogit_wdy IMPLEMENTATION.
 
 
   METHOD add_predef_methods.
@@ -362,6 +362,7 @@ CLASS zcl_hrpy_utility_abaptogit_wdy IMPLEMENTATION.
         ENDLOOP.
 
       CATCH cx_wdy_md_exception cx_wdy_md_adt_exception. "#EC NOHANDLER
+        MESSAGE e053(swdp_wdy_md_adt).
     ENDTRY.
   ENDMETHOD.
 
@@ -1525,7 +1526,7 @@ CLASS zcl_hrpy_utility_abaptogit_wdy IMPLEMENTATION.
                      p_controller_type = wdyn_ctlr_type_custom
                      p_description     = description ).
 
-    CREATE OBJECT result TYPE zcl_hrpy_utility_abaptogit_wdy
+    CREATE OBJECT result TYPE zcl_utility_abaptogit_wdy
       EXPORTING
         p_controller_key = l_controller_key
         p_version        = 'I'
@@ -1697,6 +1698,7 @@ CLASS zcl_hrpy_utility_abaptogit_wdy IMPLEMENTATION.
     TRY.
         l_reader_vrs ?= m_reader.
       CATCH cx_sy_move_cast_error.
+        MESSAGE e000(swdp_wb_tool) WITH space 'zcl_utility_abaptogit_wdy=>GET_CONTROLLER_REF' INTO l_msg_str.
     ENDTRY.
 
     IF m_controller_data IS INITIAL AND l_reader_vrs IS INITIAL. "load from database
@@ -1718,7 +1720,7 @@ CLASS zcl_hrpy_utility_abaptogit_wdy IMPLEMENTATION.
             cl_wdy_wb_method_ed=>create_predef_methods( p_ref_controller = result ).
           ENDIF.
         CATCH cx_wdy_md_permission_failure. "cannot occur
-          RETURN.
+          MESSAGE e000(swdp_wb_tool) WITH space 'zcl_utility_abaptogit_wdy=>GET_CONTROLLER_REF' INTO l_msg_str.
       ENDTRY.
 
     ELSE.
@@ -1731,7 +1733,7 @@ CLASS zcl_hrpy_utility_abaptogit_wdy IMPLEMENTATION.
           controller_key      = m_controller_key
           controller_metadata = l_controller_md ).
       IF result IS INITIAL.
-        MESSAGE e000(swdp_wb_tool) WITH space 'zcl_hrpy_utility_abaptogit_wdy=>GET_CONTROLLER_REF' INTO l_msg_str.
+        MESSAGE e000(swdp_wb_tool) WITH space 'zcl_utility_abaptogit_wdy=>GET_CONTROLLER_REF' INTO l_msg_str.
         me->raise_adt_exception_by_msg( ).
       ENDIF.
     ENDIF.
@@ -1830,7 +1832,7 @@ CLASS zcl_hrpy_utility_abaptogit_wdy IMPLEMENTATION.
       raise_adt_exception_by_msg( ).
     ENDIF.
 
-    CREATE OBJECT result TYPE zcl_hrpy_utility_abaptogit_wdy
+    CREATE OBJECT result TYPE zcl_utility_abaptogit_wdy
       EXPORTING
         p_controller_key  = l_controller_key
         p_version         = 'I'
@@ -1862,7 +1864,7 @@ CLASS zcl_hrpy_utility_abaptogit_wdy IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    CREATE OBJECT result TYPE zcl_hrpy_utility_abaptogit_wdy
+    CREATE OBJECT result TYPE zcl_utility_abaptogit_wdy
       EXPORTING
         p_controller_key = l_controller_key
         p_version        = version
@@ -1887,7 +1889,7 @@ CLASS zcl_hrpy_utility_abaptogit_wdy IMPLEMENTATION.
           textid      = cx_wdy_md_not_existing=>controller_not_existing.
     ENDIF.
 
-    CREATE OBJECT result TYPE zcl_hrpy_utility_abaptogit_wdy
+    CREATE OBJECT result TYPE zcl_utility_abaptogit_wdy
       EXPORTING
         p_controller_key = l_controller_key
         p_version_number = version_number
@@ -2808,7 +2810,11 @@ CLASS zcl_hrpy_utility_abaptogit_wdy IMPLEMENTATION.
       CHANGING
         delta                = l_delta
       EXCEPTIONS
-        inconsistent_objects = 0.
+        inconsistent_objects = 1
+        OTHERS               = 2.
+    IF sy-subrc <> 0.
+        RETURN.
+    ENDIF.
 * !!!ATTENTION!!!
 * in case of a modification, i.e. vrsflag = 'U', the delta information contains the OLD data
 

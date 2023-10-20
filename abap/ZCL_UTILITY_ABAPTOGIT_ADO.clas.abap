@@ -865,7 +865,7 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
       ENDIF.
     ELSEIF iv_commit_object-objtype = 'WDYD' OR iv_commit_object-objtype = 'WDYN'.
 
-     IF iv_folder_structure = c_folder_structure_flat.
+      IF iv_folder_structure = c_folder_structure_flat.
         rv_name = |{ lv_objname }.wdyd.json|.
       ELSEIF iv_folder_structure = c_folder_structure_eclipse.
           " include case
@@ -1306,6 +1306,8 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
   METHOD get_trs_daterange.
 
     DATA lv_status TYPE string.
+    DATA lv_titl TYPE string.
+
     IF iv_mode = 'latest'.
         lv_status = c_relests.
     ELSEIF iv_mode = 'active'.
@@ -1314,6 +1316,11 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
     SELECT trkorr, as4user, as4date, as4time, trfunction INTO TABLE @et_trids FROM e070
         WHERE ( trfunction = @c_custtrfunc OR trfunction = @c_wkbtrfunc ) AND trstatus = @lv_status AND as4date >= @iv_fromdat AND as4date <= @iv_todat.
     SORT et_trids BY dat tim.
+
+    LOOP AT et_trids ASSIGNING FIELD-SYMBOL(<fs>).
+        SELECT SINGLE as4text FROM e07t INTO lv_titl WHERE trkorr = <fs>-trid AND langu = 'E'.
+        <fs>-titl = lv_titl.
+    ENDLOOP.
 
   ENDMETHOD.
 
@@ -1589,6 +1596,7 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
   METHOD push_tr_commit_objects.
 
     DATA lv_commit_object TYPE zcl_utility_abaptogit_tr=>ts_commit_object.
+    DATA lt_filepaths TYPE TABLE OF string.
     DATA lv_commit TYPE ts_commit.
     DATA lv_commitid TYPE string.
     DATA lv_userid TYPE string.
@@ -1621,6 +1629,11 @@ CLASS zcl_utility_abaptogit_ado IMPLEMENTATION.
               iv_folder_structure = iv_folder_structure
                ).
       DATA(lv_filepath) = |{ lv_rootfolder }{ lv_commit_object-devclass }{ c_delimgit }{ lv_code_name }|.
+
+      IF line_exists( lt_filepaths[ table_line = lv_filepath ] ).
+        CONTINUE.
+      ENDIF.
+      APPEND lv_filepath TO lt_filepaths.
 
       " config change delta/full file may exist
       lv_success = me->get_item_ado(
