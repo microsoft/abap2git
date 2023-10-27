@@ -266,6 +266,8 @@ CLASS zcl_utility_abaptogit DEFINITION
     " it_rfcconnection - RFC connections for config table
     " ev_title - title of the TR
     " ev_newprurl - URL of PR creation
+    " ev_gettrdone - successful to get TR objects
+    " ev_pushdone - successful to push to ADO
     METHODS create_pullrequest
       IMPORTING
                 iv_packagenames   TYPE string
@@ -282,6 +284,8 @@ CLASS zcl_utility_abaptogit DEFINITION
       EXPORTING
                 ev_title          TYPE string
                 ev_newprurl       TYPE string
+                ev_gettrdone      TYPE abap_bool
+                ev_pushdone       TYPE abap_bool
       RETURNING VALUE(rv_success) TYPE abap_bool.
 
     " revise with code changes on the ADO pull request for the TR code review process
@@ -294,6 +298,8 @@ CLASS zcl_utility_abaptogit DEFINITION
     " it_excl_objs - exclusion list for object type
     " it_excl_tbls - exclusion list for configuration table names
     " it_rfcconnection - RFC connections for config table
+    " ev_gettrdone - successful to get TR objects
+    " ev_pushdone - successful to push to ADO
     METHODS revise_pullrequest
       IMPORTING
                 iv_packagenames   TYPE string
@@ -305,6 +311,9 @@ CLASS zcl_utility_abaptogit DEFINITION
                 it_excl_objs      TYPE zcl_utility_abaptogit_tr=>tty_excl_list OPTIONAL
                 it_excl_tbls      TYPE zcl_utility_abaptogit_tr=>tty_excl_list OPTIONAL
                 it_rfcconnection  TYPE zcl_utility_abaptogit_tr=>tty_rfcconnection OPTIONAL
+      EXPORTING
+                ev_gettrdone      TYPE abap_bool
+                ev_pushdone       TYPE abap_bool
       RETURNING VALUE(rv_success) TYPE abap_bool.
 
     " get active or latest completed pull request for the TR
@@ -641,6 +650,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     " get active version of TR objects
     "BUGBUG: TO DO: we need to check the commit object time stamp
     "Do we want to keep each tr object separate or unify them?
+    ev_gettrdone = abap_false.
     rv_success = me->oref_tr->get_tr_commit_objects(
         EXPORTING
             iv_trid = iv_trid
@@ -657,6 +667,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             it_commit_objects = lt_commit_objects
              ).
     CHECK rv_success = abap_true.
+    ev_gettrdone = abap_true.
 
     me->prepare_landscape_branch( EXPORTING iv_prefix = iv_prefix IMPORTING ev_branch = lv_slrelbranch ).
     DATA(lv_privatebranch) = |users/{ lv_owner }/TR/{ iv_trid }|.
@@ -686,6 +697,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     ENDIF.
 
     " sync active version of TR objects to private branch
+    ev_pushdone = abap_false.
     rv_success = me->oref_ado->push_tr_commit_objects(
         EXPORTING
             iv_trid = iv_trid
@@ -699,6 +711,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             ev_synccnt = lv_synccnt
              ).
     CHECK rv_success = abap_true.
+    ev_pushdone = abap_true.
 
     IF lv_synccnt = 0.
       me->write_telemetry( iv_message = |TR { iv_trid } has no objects matching criteria to sync to private branch { lv_privatebranch }| iv_kind = 'info' ).
@@ -2132,6 +2145,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     DATA lv_author TYPE string.
 
     " get active version of TR objects
+    ev_gettrdone = abap_false.
     rv_success = me->oref_tr->get_tr_commit_objects(
         EXPORTING
             iv_trid = iv_trid
@@ -2147,6 +2161,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             it_commit_objects = lt_commit_objects
              ).
     CHECK rv_success = abap_true.
+    ev_gettrdone = abap_true.
 
     DATA(lv_privatebranch) = |users/{ lv_owner }/TR/{ iv_trid }|.
 
@@ -2161,6 +2176,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
     ENDIF.
 
     " sync active version of TR objects to private branch
+    ev_pushdone = abap_false.
     rv_success = me->oref_ado->push_tr_commit_objects(
         EXPORTING
             iv_trid = iv_trid
@@ -2174,6 +2190,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT IMPLEMENTATION.
             ev_synccnt = lv_synccnt
              ).
     CHECK rv_success = abap_true.
+    ev_pushdone = abap_true.
 
     IF lv_synccnt = 0.
       me->write_telemetry( iv_message = |TR { iv_trid } has no objects matching criteria to sync to private branch { lv_privatebranch }| iv_kind = 'info' ).
