@@ -860,6 +860,7 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
              sysid TYPE string,
              field TYPE string,
              value TYPE string,
+             valid TYPE abap_bool,
              norow TYPE abap_bool,
          END OF ty_fieldvalue.
     TYPES: tty_fieldvalue TYPE TABLE OF ty_fieldvalue WITH KEY sysid field.
@@ -976,20 +977,6 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
         iv_maxfulltable   TYPE i DEFAULT 10
       CHANGING
         it_commit_objects TYPE tty_commit_object.
-
-    " experiment: extract config changes from audit log
-    METHODS build_config_log
-      IMPORTING
-                iv_trid           TYPE e070-trkorr
-                iv_tabname        TYPE string
-                iv_fromdate       TYPE d
-                iv_fromtime       TYPE t
-                iv_todate         TYPE d
-                iv_totime         TYPE t
-                iv_user           TYPE string
-      EXPORTING
-                abaptext          TYPE tty_abaptext
-      RETURNING VALUE(rv_success) TYPE abap_bool.
 
     " get function group name of an object in a function group
     METHODS get_fugr
@@ -1235,6 +1222,7 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
       IMPORTING
         iv_data_table_desc TYPE ty_data_table_desc
         iv_line            TYPE string
+        iv_deleted         TYPE abap_bool DEFAULT abap_false
       CHANGING
         cht_filecontent    TYPE tty_abaptext.
 
@@ -1272,6 +1260,7 @@ CLASS zcl_utility_abaptogit_tr DEFINITION
         iv_data_table_desc TYPE ty_data_table_desc
         iv_criteria        TYPE string
         it_rfc_tabvalue    TYPE tty_rfc_tabvalue
+        iv_deleted         TYPE abap_bool DEFAULT abap_false
       EXPORTING
         abaptext           TYPE tty_abaptext.
 
@@ -1527,77 +1516,6 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD build_config_log.
-
-    DATA lv_tabname TYPE e071-obj_name.
-    DATA ls_data_table_desc TYPE ty_data_table_desc.
-    DATA lv_row TYPE i.
-    FIELD-SYMBOLS <fs_entry> TYPE line.
-    DATA lv_entry TYPE dbtablog.
-    DATA lv_string TYPE string.
-    DATA fromday TYPE d.
-    DATA fromtime TYPE t.
-    DATA lt_log_list TYPE stprt_log_stable_type.
-    DATA lt_obj_cnt_list TYPE stprt_obj_app_cnt_list_type.
-    DATA lt_user_list TYPE stprt_user_name_list_type.
-
-    APPEND VALUE stprt_user_name_sel_line_type( sign = 'I' option = 'EQ' low = iv_user high = '' ) TO lt_user_list.
-
-    CALL FUNCTION 'DBLOG_READ_WITH_STATISTIC'
-      EXPORTING
-        from_day             = iv_fromdate
-        from_time            = iv_fromtime
-        to_day               = iv_todate
-        to_time              = iv_totime
-        user_list            = lt_user_list
-      CHANGING
-        log_list             = lt_log_list
-        obj_cnt_list         = lt_obj_cnt_list
-      EXCEPTIONS
-        archive_access_error = 1
-        no_archives_found    = 2
-        OTHERS               = 3.
-    CHECK sy-subrc = 0.
-
-    lv_tabname = iv_tabname.
-    rv_success = me->get_table_schema(
-        EXPORTING
-            iv_objname = lv_tabname
-            iv_version = 0
-            iv_escape = abap_false
-        IMPORTING
-            ev_desc = ls_data_table_desc
-             ).
-    CHECK rv_success = abap_true.
-
-    DATA unicode_2_abap TYPE REF TO cl_abap_conv_in_ce.
-    FIELD-SYMBOLS <fsx> TYPE x.
-
-    lv_entry = lt_log_list[ tabname = lv_tabname ].     "#EC CI_SORTSEQ
-    DATA datalen TYPE i.
-    datalen = lv_entry-dataln.
-    ASSIGN lv_entry-logdata(datalen) TO <fsx>.
-
-    unicode_2_abap = cl_abap_conv_in_ce=>create( encoding = '4102' ).
-    unicode_2_abap->convert(
-        EXPORTING input = <fsx>
-        IMPORTING data  = lv_string
-         ).
-
-    APPEND 'Rows:' TO abaptext.
-    APPEND '' TO abaptext.
-    me->get_column_values(
-        EXPORTING
-            iv_data_table_desc = ls_data_table_desc
-            iv_line = lv_string
-         CHANGING
-            cht_filecontent = abaptext
-             ).
-    APPEND '' TO abaptext.
-
-  ENDMETHOD.
-
-
   METHOD build_data_table_content.
 
     DATA ls_data_table_desc TYPE ty_data_table_desc.
@@ -1790,28 +1708,38 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
               me->write_telemetry( iv_message = |BUILD_LOGICAL_CONFIG_CHANGE fails in SRTT_TABLE_GET_BY_KEYLIST call with { lv_tabname }| ).
             ENDIF.
 
-            " extract field values from entry line text
-            " full column values besides keys
-            LOOP AT lt_entry_tab ASSIGNING <fs_entry>.
-              IF iv_deltastats = abap_false.
+            IF lines( lt_entry_tab ) = 0.
+                " if no rows are fetched, the rows are deleted in the TR
                 APPEND |Row { lv_row }| TO lt_filecontent.
-                lv_line = <fs_entry>.
+                lv_line = wakey-tabkey.
                 me->get_column_values(
                     EXPORTING
                         iv_data_table_desc = ls_data_table_desc
                         iv_line = lv_line
+                        iv_deleted = abap_true
                      CHANGING
                         cht_filecontent = lt_filecontent
                          ).
-                APPEND '' TO lt_filecontent.
-              ENDIF.
-              lv_row = lv_row + 1.
-            ENDLOOP.
-
-            " if no rows are written, the rows are deleted in the TR
-            IF lines( lt_entry_tab ) = 0.
-              APPEND '(Row(s) for the table key are deleted in the TR)' TO lt_filecontent.
+            ELSE.
+                " extract field values from entry line text
+                " full column values besides keys
+                LOOP AT lt_entry_tab ASSIGNING <fs_entry>.
+                  IF iv_deltastats = abap_false.
+                    APPEND |Row { lv_row }| TO lt_filecontent.
+                    lv_line = <fs_entry>.
+                    me->get_column_values(
+                        EXPORTING
+                            iv_data_table_desc = ls_data_table_desc
+                            iv_line = lv_line
+                         CHANGING
+                            cht_filecontent = lt_filecontent
+                             ).
+                    APPEND '' TO lt_filecontent.
+                  ENDIF.
+                  lv_row = lv_row + 1.
+                ENDLOOP.
             ENDIF.
+
         ENDIF.
 
         IF iv_deltastats = abap_false.
@@ -3039,6 +2967,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
             iv_data_table_desc = iv_data_table_desc
             iv_criteria = lv_criteria
             it_rfc_tabvalue = lt_rfc_tabvalue
+            iv_deleted = iv_deleted
         IMPORTING
             abaptext = cht_filecontent
              ).
@@ -3130,7 +3059,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       APPEND |    { lv_field } { lv_value }| TO cht_filecontent.
 
       IF iv_valid = abap_true.
-          APPEND VALUE ty_fieldvalue( sysid = iv_sysid field = wafield-fieldname value = lv_value norow = iv_norow ) TO et_fieldvalue.
+          APPEND VALUE ty_fieldvalue( sysid = iv_sysid field = wafield-fieldname value = lv_value valid = abap_true norow = iv_norow ) TO et_fieldvalue.
       ELSE.
           APPEND VALUE ty_fieldvalue( sysid = iv_sysid field = wafield-fieldname value = 'N/A' ) TO et_fieldvalue.
       ENDIF.
@@ -3272,27 +3201,37 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " extract field values from entry line text
     ev_rows = 1.
-    LOOP AT lt_entry_tab ASSIGNING <fs_entry>.
-      IF iv_deltastats = abap_false.
+
+    IF lines( lt_entry_tab ) = 0.
+        " if no rows are fetched, the rows are deleted in the TR
         APPEND |Row { ev_rows }| TO abaptext.
-        lv_entry = <fs_entry>.
+        lv_entry = lt_keys[ 1 ]-tabkey.
         me->get_column_values(
             EXPORTING
                 iv_data_table_desc = ls_data_table_desc
                 iv_line = lv_entry
+                iv_deleted = abap_true
              CHANGING
                 cht_filecontent = abaptext
                  ).
-        APPEND '' TO abaptext.
-      ENDIF.
-      ev_rows = ev_rows + 1.
-    ENDLOOP.
-
-    " if no rows are written, the rows are deleted in the TR
-    IF ev_rows = 1.
-      APPEND '(Row(s) for the table key are deleted in the TR)' TO abaptext.
+    ELSE.
+        " extract field values from entry line text
+        LOOP AT lt_entry_tab ASSIGNING <fs_entry>.
+          IF iv_deltastats = abap_false.
+            APPEND |Row { ev_rows }| TO abaptext.
+            lv_entry = <fs_entry>.
+            me->get_column_values(
+                EXPORTING
+                    iv_data_table_desc = ls_data_table_desc
+                    iv_line = lv_entry
+                 CHANGING
+                    cht_filecontent = abaptext
+                     ).
+            APPEND '' TO abaptext.
+          ENDIF.
+          ev_rows = ev_rows + 1.
+        ENDLOOP.
     ENDIF.
 
     rv_success = abap_true.
@@ -4327,6 +4266,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
     DATA lv_value TYPE string.
     DATA lt_fieldvalue TYPE tty_fieldvalue.
     DATA lt_dummycontent TYPE tty_abaptext.
+    DATA lv_valid TYPE abap_bool.
     DATA lv_norow TYPE abap_bool.
 
     LOOP AT it_rfc_tabvalue ASSIGNING <fs_tabvalue>.
@@ -4346,6 +4286,43 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                  ).
         CLEAR lt_dummycontent.
     ENDLOOP.
+
+    IF iv_deleted = abap_true.
+
+      LOOP AT iv_data_table_desc-dd03v INTO wafield WHERE keyflag = abap_false.
+        lv_fieldname = wafield-fieldname.
+        lv_strlen = strlen( wafield-fieldname ).
+        lv_field = '                                :'.
+        lv_field+0(lv_strlen) = wafield-fieldname.
+        APPEND |    { lv_field }| TO abaptext.
+        APPEND |        ({ sy-sysid } - No value in this system)| TO abaptext.
+        LOOP AT it_rfc_tabvalue ASSIGNING <fs_tabvalue>.
+            IF <fs_tabvalue>-sysid = sy-sysid.
+                CONTINUE.
+            ENDIF.
+            IF line_exists( lt_fieldvalue[ sysid = <fs_tabvalue>-sysid field = wafield-fieldname ] ).
+                lv_value = lt_fieldvalue[ sysid = <fs_tabvalue>-sysid field = wafield-fieldname ]-value.
+                lv_norow = lt_fieldvalue[ sysid = <fs_tabvalue>-sysid field = wafield-fieldname ]-norow.
+                lv_valid = lt_fieldvalue[ sysid = <fs_tabvalue>-sysid field = wafield-fieldname ]-valid.
+                IF lv_norow = abap_true.
+                    APPEND |        ({ <fs_tabvalue>-sysid } - No value in this system)| TO abaptext.
+                ELSE.
+                    IF lv_valid = abap_true.
+                        APPEND |        ({ <fs_tabvalue>-sysid }) { lv_value }| TO abaptext.
+                    ELSE.
+                        APPEND |        ({ <fs_tabvalue>-sysid } - N/A)| TO abaptext.
+                    ENDIF.
+                ENDIF.
+            ELSE.
+                APPEND |        ({ <fs_tabvalue>-sysid } - N/A)| TO abaptext.
+            ENDIF.
+        ENDLOOP.
+      ENDLOOP.
+      APPEND '' TO abaptext.
+
+      RETURN.
+
+    ENDIF.
 
     " prepare for dynamic SQL query for all rows
     CALL METHOD cl_abap_typedescr=>describe_by_name
@@ -4392,10 +4369,15 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
                 IF line_exists( lt_fieldvalue[ sysid = <fs_tabvalue>-sysid field = wafield-fieldname ] ).
                     lv_value = lt_fieldvalue[ sysid = <fs_tabvalue>-sysid field = wafield-fieldname ]-value.
                     lv_norow = lt_fieldvalue[ sysid = <fs_tabvalue>-sysid field = wafield-fieldname ]-norow.
+                    lv_valid = lt_fieldvalue[ sysid = <fs_tabvalue>-sysid field = wafield-fieldname ]-valid.
                     IF lv_norow = abap_true.
                         APPEND |        ({ <fs_tabvalue>-sysid } - No value in this system)| TO abaptext.
                     ELSE.
-                        APPEND |        ({ <fs_tabvalue>-sysid }) { lv_value }| TO abaptext.
+                        IF lv_valid = abap_true.
+                            APPEND |        ({ <fs_tabvalue>-sysid }) { lv_value }| TO abaptext.
+                        ELSE.
+                            APPEND |        ({ <fs_tabvalue>-sysid } - N/A)| TO abaptext.
+                        ENDIF.
                     ENDIF.
                 ELSE.
                     APPEND |        ({ <fs_tabvalue>-sysid } - N/A)| TO abaptext.
@@ -6866,7 +6848,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       EXCEPTIONS
         wrong_call = 8.
     IF sy-subrc <> 0 OR lv_cant_open = abap_true.
-      me->write_telemetry( iv_message = |BUILD_CONFIG_LOG fails to call STRF_OPEN_PROT { sy-subrc }| ).
+      me->write_telemetry( iv_message = |get_tr_creation fails to call STRF_OPEN_PROT { sy-subrc }| ).
       RETURN.
     ENDIF.
 
@@ -6882,7 +6864,7 @@ CLASS ZCL_UTILITY_ABAPTOGIT_TR IMPLEMENTATION.
       EXCEPTIONS
         OTHERS          = 1.
     IF sy-subrc <> 0.
-      me->write_telemetry( iv_message = |BUILD_CONFIG_LOG fails to call TRINT_READ_LOG { sy-subrc }| ).
+      me->write_telemetry( iv_message = |get_tr_creation fails to call TRINT_READ_LOG { sy-subrc }| ).
       RETURN.
     ENDIF.
 
